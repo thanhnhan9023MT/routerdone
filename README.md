@@ -3,6 +3,35 @@
 RouterDone is an OpenAI-compatible local AI gateway and routing dashboard. It lets you add upstream providers, create routing combos, expose `/v1/*` endpoints, and route helper models through a neutral fallback combo.
 
 This repository is intended to be a clean public export. It contains no prior git history from the private `llmGateway` source repository.
+## One-Line Install
+
+Linux / macOS (auto-clones, generates secrets, starts Docker):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/thoa100m/routerdone/main/install.sh | bash
+```
+
+Windows (PowerShell):
+
+```powershell
+irm https://raw.githubusercontent.com/thoa100m/routerdone/main/install.ps1 | iex
+```
+
+Options: `PORT` (default 20128), `DIR` (default routerdone), `INITIAL_PASSWORD` (auto if unset).
+
+The admin password is printed at the end if it was auto-generated. Full per-scenario detail: `docs/INSTALL.md`.
+
+## Install Guide
+
+Detailed, step-by-step install for each scenario lives in `docs/INSTALL.md`:
+
+- Personal computer (Docker): `docs/INSTALL.md` Scenario A
+- VPS / server (Docker, public + HTTPS): `docs/INSTALL.md` Scenario B
+- Dokploy (managed Compose): `docs/INSTALL.md` Scenario C and `docs/DOKPLOY.md`
+- Local development from source: `docs/INSTALL.md` Scenario D
+- Versions and updating: `docs/INSTALL.md` Versions And Updating
+
+The sections below are a fast path. Use the install guide for full per-scenario detail.
 
 ## Quick Start With Docker Compose
 
@@ -217,3 +246,11 @@ Then follow `README.md`, `PATCH_ORDER.md`, `REBRAND_RULES.md`, and `VERIFY_CHECK
 ## License
 
 MIT. Keep upstream attribution in `LICENSE`.
+
+## Credits
+
+RouterDone is a fork of [9Router](https://github.com/decolua/9router) by decolua, rebuilt as a clean public distribution under the RouterDone brand.
+
+On top of upstream it adds and ships extra improvements: progressive/scored request token compression (RTK), provider auto-heal, quota auto-manage, adaptive timeouts, runtime observability, combo stream-error fallback, tool-call argument sanitization, output-text normalization, and a configurable Model Redirect for helper/auxiliary models.
+
+Upstream license and attribution are preserved in `LICENSE`.

@@ -1,7 +1,7 @@
-﻿// Agent Skills metadata — single source of truth for /dashboard/skills page.
+// Agent Skills metadata — single source of truth for /dashboard/skills page.
 // Each skill = 1 raw GitHub URL the user copies and pastes to any AI agent.
 
-const REPO = "routerdone/routerdone";
+const REPO = "thoa100m/routerdone";
 const BRANCH = "master";
 const SKILL_PATH = "skills";
 

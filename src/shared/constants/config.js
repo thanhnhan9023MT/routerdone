@@ -1,4 +1,4 @@
-﻿import pkg from "../../../package.json" with { type: "json" };
+import pkg from "../../../package.json" with { type: "json" };
 
 // App configuration
 export const APP_CONFIG = {
@@ -10,7 +10,7 @@ export const APP_CONFIG = {
 
 // GitHub configuration
 export const GITHUB_CONFIG = {
-  changelogUrl: "https://raw.githubusercontent.com/routerdone/routerdone/refs/heads/master/CHANGELOG.md",
+  changelogUrl: "https://raw.githubusercontent.com/thoa100m/routerdone/refs/heads/master/CHANGELOG.md",
 };
 
 // Updater configuration
