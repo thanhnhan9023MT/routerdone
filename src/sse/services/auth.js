@@ -265,6 +265,10 @@ export async function markAccountUnavailable(connectionId, status, errorText, pr
         comboPreflightFailureAt: null,
       };
 
+  // 402 Payment Required: auto-disable the connection so it stops being
+  // selected for routing. A billing problem is not transient like a rate
+  // limit; the owner must fix payment and manually re-enable the account.
+  const paymentBlocked = status === 402;
   await updateProviderConnection(connectionId, {
     ...lockUpdate,
     ...failureUpdate,
@@ -272,7 +276,8 @@ export async function markAccountUnavailable(connectionId, status, errorText, pr
     lastError: reason,
     errorCode: status,
     lastErrorAt: new Date().toISOString(),
-    backoffLevel: newBackoffLevel ?? backoffLevel
+    backoffLevel: newBackoffLevel ?? backoffLevel,
+    ...(paymentBlocked ? { isActive: false } : {}),
   });
 
   const lockKey = Object.keys(lockUpdate)[0];
@@ -328,6 +333,7 @@ export async function clearAccountError(connectionId, currentConnection, model =
       testStatus: "active",
       lastError: null,
       lastErrorAt: null,
+      errorCode: null,
       backoffLevel: 0,
       comboPreflightFailureKind: null,
       comboPreflightFailureCount: 0,

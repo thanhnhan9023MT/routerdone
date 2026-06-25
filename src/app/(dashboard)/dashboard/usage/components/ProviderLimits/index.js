@@ -606,9 +606,21 @@ export default function ProviderLimits() {
     });
   };
 
+  // A connection is payment-blocked when it currently has an active 402
+  // (Payment Required / billing) error. Such connections must stay disabled
+  // even when quota numbers look positive, because the upstream account has a
+  // billing problem that quota data does not reflect.
+  const isConnectionPaymentBlocked = (conn) => {
+    if (conn?.errorCode === 402 && conn?.testStatus === "unavailable") return true;
+    const err = String(conn?.lastError || "").toLowerCase();
+    return err.includes("payment required") || err.includes("billing_error");
+  };
+
   // Connection is fully available only when ALL quota types are above threshold.
   // AND condition: session AND weekly must both be positive; one depleted -> stays disabled.
+  // A 402 payment-blocked connection is never "fully available" regardless of quota.
   const isConnectionFullyAvailable = (conn) => {
+    if (isConnectionPaymentBlocked(conn)) return false;
     const quotas = quotaData[conn.id]?.quotas;
     if (!quotas?.length) return false;
     return quotas.every((q) => {
@@ -710,7 +722,7 @@ export default function ProviderLimits() {
 
     const toggles = [
       ...conns
-        .filter((c) => (c.isActive ?? true) && isConnectionDepleted(c))
+        .filter((c) => (c.isActive ?? true) && (isConnectionDepleted(c) || isConnectionPaymentBlocked(c)))
         .map((c) => ({ id: c.id, isActive: false })),
       ...conns
         .filter((c) => !(c.isActive ?? true) && isConnectionFullyAvailable(c))
@@ -721,7 +733,7 @@ export default function ProviderLimits() {
       const disabled = toggles.filter((t) => !t.isActive).length;
       const enabled = toggles.filter((t) => t.isActive).length;
       const notices = [];
-      if (disabled > 0) notices.push(`Auto-disabled ${disabled} depleted account(s)`);
+      if (disabled > 0) notices.push(`Auto-disabled ${disabled} account(s) (depleted or payment error)`);
       if (enabled > 0) notices.push(`Auto-enabled ${enabled} account(s) with available quota`);
       setAutoManageNotice(notices.join(" - "));
       bulkToggleMixed(toggles);
