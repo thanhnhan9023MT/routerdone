@@ -1,4 +1,4 @@
-﻿@import "tailwindcss";
+@import "tailwindcss";
 
 @custom-variant dark (&:where(.dark, .dark *));
 
@@ -296,7 +296,7 @@ input, textarea {
 .traffic-light.yellow { background: #FFBD2E; }
 .traffic-light.green { background: #27C93F; }
 
-/* Material Symbols (subset: 138 icons, ~111KB) */
+/* Material Symbols Outlined (full variable font, ~3.96MB) - restored from node_modules; subset 0644b64 dropped ligatures/glyphs used by UI */
 @font-face {
   font-family: "Material Symbols Outlined";
   font-style: normal;
