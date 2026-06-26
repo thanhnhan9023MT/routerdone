@@ -1,42 +1,31 @@
 import { NextResponse } from "next/server";
-import { getRequestDetails } from "@/lib/requestDetailsDb";
 import { getProviderNodes } from "@/lib/localDb";
 import { AI_PROVIDERS, getProviderByAlias } from "@/shared/constants/providers";
+import { getAdapter } from "@/lib/db/driver.js";
 
 /**
  * GET /api/usage/providers
- * Returns list of unique providers from request details
+ * Returns list of unique providers from usageHistory (DISTINCT query, no full scan)
  */
 export async function GET() {
   try {
-    const { details } = await getRequestDetails({ pageSize: 9999 });
+    const db = await getAdapter();
 
-    // Extract unique providers
-    const providerIds = [...new Set(details.map(r => r.provider).filter(Boolean))].sort();
+    // Extract unique providers via DISTINCT query instead of fetching all details
+    const rows = db.all(`SELECT DISTINCT provider FROM usageHistory WHERE provider IS NOT NULL AND provider != ''`);
+    const providerAliases = [...new Set(rows.map(r => r.provider))].sort();
 
     const providerNodes = await getProviderNodes();
-    const nodeMap = {};
-    for (const node of providerNodes) {
-      nodeMap[node.id] = node.name;
-    }
+    const nodeMap = Object.fromEntries(providerNodes.map(n => [n.id, n.name]));
 
-    const providers = providerIds.map(providerId => {
-      let name = providerId;
-      if (nodeMap[providerId]) {
-        name = nodeMap[providerId];
-      } else {
-        const providerConfig = getProviderByAlias(providerId) || AI_PROVIDERS[providerId];
-        if (providerConfig?.name) name = providerConfig.name;
-      }
-      return { id: providerId, name };
+    const providers = providerAliases.map(alias => {
+      const name = nodeMap[alias] || getProviderByAlias(alias)?.name || AI_PROVIDERS[alias]?.name || alias;
+      return { id: alias, name };
     });
 
     return NextResponse.json({ providers });
-  } catch (error) {
-    console.error("[API] Failed to get providers:", error);
-    return NextResponse.json(
-      { error: "Failed to fetch providers" },
-      { status: 500 }
-    );
+  } catch (e) {
+    console.error("[API] Failed to get providers:", e);
+    return NextResponse.json({ error: "Failed to fetch providers" }, { status: 500 });
   }
 }

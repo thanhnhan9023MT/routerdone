@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { memo, useState, useEffect, useCallback } from "react";
 import PropTypes from "prop-types";
 import {
   AreaChart,
@@ -14,6 +14,25 @@ import {
 } from "recharts";
 import Card from "@/shared/components/Card";
 
+const USAGE_CHART_CACHE_PREFIX = "routerdone:usage-chart:";
+
+function readCache(key) {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeCache(key, data) {
+  if (typeof window === "undefined" || !data) return;
+  try {
+    window.localStorage.setItem(key, JSON.stringify({ data, ts: Date.now() }));
+  } catch {}
+}
+
 const fmtTokens = (n) => {
   if (n >= 1000000) return `${(n / 1000000).toFixed(1)}M`;
   if (n >= 1000) return `${(n / 1000).toFixed(1)}K`;
@@ -22,18 +41,21 @@ const fmtTokens = (n) => {
 
 const fmtCost = (n) => `$${(n || 0).toFixed(4)}`;
 
-export default function UsageChart({ period = "7d" }) {
+function UsageChart({ period = "7d" }) {
   const [data, setData] = useState([]);
   const [loading, setLoading] = useState(true);
   const [viewMode, setViewMode] = useState("tokens");
 
   const fetchData = useCallback(async () => {
-    setLoading(true);
+    const cacheKey = `${USAGE_CHART_CACHE_PREFIX}${period}`;
+    const cached = readCache(cacheKey);
+    setLoading(!Array.isArray(cached?.data));
     try {
       const res = await fetch(`/api/usage/chart?period=${period}`);
       if (res.ok) {
         const json = await res.json();
         setData(json);
+        writeCache(cacheKey, json);
       }
     } catch (e) {
       console.error("Failed to fetch chart data:", e);
@@ -43,6 +65,11 @@ export default function UsageChart({ period = "7d" }) {
   }, [period]);
 
   useEffect(() => {
+    const cached = readCache(`${USAGE_CHART_CACHE_PREFIX}${period}`);
+    if (Array.isArray(cached?.data)) {
+      setData(cached.data);
+      setLoading(false);
+    }
     fetchData();
   }, [fetchData]);
 
@@ -139,3 +166,5 @@ export default function UsageChart({ period = "7d" }) {
 UsageChart.propTypes = {
   period: PropTypes.string,
 };
+
+export default memo(UsageChart);

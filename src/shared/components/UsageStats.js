@@ -17,6 +17,33 @@ import UsageTable, { fmt, fmtTime } from "@/app/(dashboard)/dashboard/usage/comp
 import ProviderTopology from "@/app/(dashboard)/dashboard/usage/components/ProviderTopology";
 import UsageChart from "@/app/(dashboard)/dashboard/usage/components/UsageChart";
 
+const DEFAULT_LIVE = {
+  activeRequests: [],
+  recentRequests: [],
+  errorProvider: "",
+  pending: null,
+};
+
+const USAGE_STATS_CACHE_PREFIX = "routerdone:usage-stats:";
+const USAGE_PROVIDERS_CACHE_KEY = "routerdone:usage-providers:v1";
+
+function readCache(key) {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeCache(key, data) {
+  if (typeof window === "undefined" || !data) return;
+  try {
+    window.localStorage.setItem(key, JSON.stringify({ data, ts: Date.now() }));
+  } catch {}
+}
+
 function timeAgo(timestamp) {
   const diff = Math.floor((Date.now() - new Date(timestamp)) / 1000);
   if (diff < 60) return `${diff}s ago`;
@@ -25,19 +52,20 @@ function timeAgo(timestamp) {
   return `${Math.floor(diff / 86400)}d ago`;
 }
 
-// Auto-update time display every second without re-rendering parent
-function TimeAgo({ timestamp }) {
-  const [, setTick] = useState(0);
-  
-  useEffect(() => {
-    const timer = setInterval(() => setTick(t => t + 1), 1000);
-    return () => clearInterval(timer);
-  }, []);
-  
-  return <>{timeAgo(timestamp)}</>;
-}
+const RECENT_REQUEST_LIMIT = 20;
 
 function RecentRequests({ requests = [] }) {
+  const [, setTick] = useState(0);
+
+  // Single timer for the whole list instead of one per row
+  useEffect(() => {
+    if (!requests.length) return;
+    const timer = setInterval(() => setTick((t) => t + 1), 1000);
+    return () => clearInterval(timer);
+  }, [requests.length]);
+
+  const capped = requests.slice(0, RECENT_REQUEST_LIMIT);
+
   return (
     <Card className="flex min-w-0 flex-col overflow-hidden" padding="sm" style={{ height: 480 }}>
       {/* Header */}
@@ -60,7 +88,7 @@ function RecentRequests({ requests = [] }) {
             </thead>
             <tbody className="divide-y divide-border/50">
 
-              {requests.map((r, i) => {
+              {capped.map((r, i) => {
                 const isPending = r.status === "PENDING" || r.status === "pending";
                 const ok = !r.status || r.status === "ok" || r.status === "success" || isPending;
                 const actualName = r.actualModel || r.model;
@@ -82,18 +110,20 @@ function RecentRequests({ requests = [] }) {
                         </>
                       )}
                     </td>
-                    <td className="py-1.5 text-right text-text-muted whitespace-nowrap"><TimeAgo timestamp={r.timestamp} /></td>
+                    <td className="py-1.5 text-right text-text-muted whitespace-nowrap">{timeAgo(r.timestamp)}</td>
                   </tr>
                 );
               })}
             </tbody>
           </table>
+          {requests.length > RECENT_REQUEST_LIMIT && (
+            <div className="px-2 py-1 text-[10px] text-text-muted text-center">Showing {RECENT_REQUEST_LIMIT} of {requests.length}</div>
+          )}
         </div>
       )}
     </Card>
   );
 }
-
 function sortData(dataMap, pendingMap = {}, sortBy, sortOrder) {
   return Object.entries(dataMap || {})
     .map(([key, data]) => {
@@ -207,20 +237,52 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
   const sortOrder = searchParams.get("sortOrder") || "asc";
 
   const [stats, setStats] = useState(null);
+  const [live, setLive] = useState(DEFAULT_LIVE);
   const [loading, setLoading] = useState(true);
   const [fetching, setFetching] = useState(false);
   const [tableView, setTableView] = useState("model");
   const [viewMode, setViewMode] = useState("costs");
   const [providers, setProviders] = useState([]);
   const [periodLocal, setPeriodLocal] = useState("today");
+  const [heavyReady, setHeavyReady] = useState(false);
   const isInitialLoad = useRef(true);
   const hasLoadedStats = useRef(false);
   const period = periodProp ?? periodLocal;
   const setPeriod = setPeriodProp ?? setPeriodLocal;
 
+  // Hydrate last rendered snapshot immediately; refresh happens in background.
+  useEffect(() => {
+    const cached = readCache(`${USAGE_STATS_CACHE_PREFIX}${period}`);
+    if (cached?.data) {
+      hasLoadedStats.current = true;
+      setStats(cached.data);
+      setLive({
+        activeRequests: cached.data.activeRequests || [],
+        recentRequests: cached.data.recentRequests || [],
+        errorProvider: cached.data.errorProvider || "",
+        pending: cached.data.pending || null,
+      });
+      setLoading(false);
+    }
+  }, [period]);
+
+  // Defer heavy component mounts (ReactFlow, recharts, table) until after first paint
+  useEffect(() => {
+    const updateReady = () => setHeavyReady(true);
+    if (typeof window !== "undefined" && window.requestIdleCallback) {
+      const handle = window.requestIdleCallback(updateReady, { timeout: 600 });
+      return () => window.cancelIdleCallback?.(handle);
+    }
+    const timer = setTimeout(updateReady, 300);
+    return () => clearTimeout(timer);
+  }, []);
+
   // Fetch connected providers once, deduplicate by provider type
   // Always include noAuth free providers (e.g. opencode) regardless of connections
   useEffect(() => {
+    const cached = readCache(USAGE_PROVIDERS_CACHE_KEY);
+    if (Array.isArray(cached?.data)) setProviders(cached.data);
+
     Promise.all([
       fetch("/api/providers").then((r) => r.ok ? r.json() : null),
       fetch("/api/provider-nodes").then((r) => r.ok ? r.json() : null),
@@ -245,7 +307,9 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
         const noAuthProviders = Object.values(FREE_PROVIDERS)
           .filter((p) => p.noAuth && !seen.has(p.id) && isLLMProvider(p.id))
           .map((p) => ({ provider: p.id, name: p.name }));
-        setProviders([...unique, ...noAuthProviders]);
+        const nextProviders = [...unique, ...noAuthProviders];
+        setProviders(nextProviders);
+        writeCache(USAGE_PROVIDERS_CACHE_KEY, nextProviders);
       })
       .catch(() => {});
   }, []);
@@ -253,9 +317,10 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
   // Fetch filtered stats via REST when period changes
   useEffect(() => {
     // First load: show full spinner; subsequent: show subtle fetching indicator
+    const cached = readCache(`${USAGE_STATS_CACHE_PREFIX}${period}`);
     if (isInitialLoad.current) {
       isInitialLoad.current = false;
-      setLoading(true);
+      setLoading(!cached?.data);
     } else {
       setFetching(true);
     }
@@ -265,7 +330,14 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
       .then((data) => {
         if (data) {
           hasLoadedStats.current = true;
-          setStats((prev) => ({ ...prev, ...data }));
+          writeCache(`${USAGE_STATS_CACHE_PREFIX}${period}`, data);
+          setStats(data);
+          setLive({
+            activeRequests: data.activeRequests || [],
+            recentRequests: data.recentRequests || [],
+            errorProvider: data.errorProvider || "",
+            pending: data.pending || null,
+          });
         }
       })
       .catch(() => {})
@@ -275,23 +347,18 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
       });
   }, [period]);
 
-  // SSE connection - real-time updates for activeRequests + recentRequests only
+  // SSE connection - lightweight live panel only; heavy stats stay on REST cache
   useEffect(() => {
     const es = new EventSource("/api/usage/stream");
 
     es.onmessage = (e) => {
       try {
         const data = JSON.parse(e.data);
-        // Always merge only real-time fields, never overwrite full stats from REST
-        setStats((prev) => {
-          if (!prev) return prev;
-          return {
-            ...prev,
-            activeRequests: data.activeRequests,
-            recentRequests: data.recentRequests,
-            errorProvider: data.errorProvider,
-            pending: data.pending,
-          };
+        setLive({
+          activeRequests: data.activeRequests || [],
+          recentRequests: data.recentRequests || [],
+          errorProvider: data.errorProvider || "",
+          pending: data.pending || null,
         });
         if (hasLoadedStats.current) setLoading(false);
       } catch (err) {
@@ -303,6 +370,22 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
 
     return () => es.close();
   }, []);
+
+  // Periodic REST refresh so table stays fresh without SSE-driven recompute
+  useEffect(() => {
+    if (!hasLoadedStats.current) return;
+    const timer = setInterval(() => {
+      fetch(`/api/usage/stats?period=${period}`)
+        .then((r) => r.ok ? r.json() : null)
+        .then((data) => {
+          if (!data) return;
+          writeCache(`${USAGE_STATS_CACHE_PREFIX}${period}`, data);
+          setStats(data);
+        })
+        .catch(() => {});
+    }, 10000);
+    return () => clearInterval(timer);
+  }, [period]);
 
   const toggleSort = useCallback((tableType, field) => {
     const params = new URLSearchParams(searchParams.toString());
@@ -467,20 +550,22 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
       {loading ? spinner : <OverviewCards stats={stats} />}
 
       {/* Provider topology + Recent Requests */}
-      {loading ? spinner : (
+      {loading ? spinner : heavyReady ? (
         <div className="grid min-w-0 grid-cols-1 items-stretch gap-2 lg:grid-cols-[minmax(0,2fr)_minmax(280px,1fr)]">
           <ProviderTopology
             providers={providers}
-            activeRequests={stats.activeRequests || []}
-            lastProvider={stats.recentRequests?.[0]?.provider || ""}
-            errorProvider={stats.errorProvider || ""}
+            activeRequests={live.activeRequests}
+            lastProvider={live.recentRequests?.[0]?.provider || ""}
+            errorProvider={live.errorProvider}
           />
-          <RecentRequests requests={stats.recentRequests || []} />
+          <RecentRequests requests={live.recentRequests} />
         </div>
+      ) : (
+        <div className="h-48 rounded-lg border border-border bg-bg-subtle" />
       )}
 
       {/* Token / Cost chart - sync period */}
-      {loading ? spinner : <UsageChart period={period} />}
+      {loading ? spinner : heavyReady ? <UsageChart period={period} /> : <div className="h-64 rounded-lg border border-border bg-bg-subtle" />}
 
       {/* Table with dropdown selector */}
       <div className="flex flex-col gap-3">
@@ -510,7 +595,7 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
             </button>
           </div>
         </div>
-        {loading ? spinner : activeTableConfig && (
+        {loading ? spinner : heavyReady && activeTableConfig && (
           <UsageTable
             title=""
             columns={activeTableConfig.columns}
