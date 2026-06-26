@@ -1,4 +1,4 @@
-// OpenAI-compatible error types mapping (client-facing)
+﻿// OpenAI-compatible error types mapping (client-facing)
 export const ERROR_TYPES = {
   400: { type: "invalid_request_error", code: "bad_request" },
   401: { type: "authentication_error", code: "invalid_api_key" },
@@ -77,6 +77,7 @@ export const ERROR_RULES = [
   { text: "empty upstream stream",             cooldownMs: 5 * 1000 },
   { text: "upstream first productive timeout", cooldownMs: 5 * 1000 },
   { text: "upstream stalled",                  cooldownMs: 5 * 1000 },
+  { text: "upstream headers timeout",          cooldownMs: 3 * 1000 },
   // --- Text-based rules (checked first, order = priority) ---
   { text: "no credentials",           cooldownMs: COOLDOWN.long },
   { text: "request not allowed",      cooldownMs: COOLDOWN.short },

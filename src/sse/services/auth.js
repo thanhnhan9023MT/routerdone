@@ -1,4 +1,4 @@
-import { getProviderConnections, validateApiKey, updateProviderConnection, getSettings } from "@/lib/localDb";
+﻿import { getProviderConnections, validateApiKey, updateProviderConnection, getSettings } from "@/lib/localDb";
 import { resolveConnectionProxyConfig } from "@/lib/network/connectionProxy";
 import { formatRetryAfter, checkFallbackError, isModelLockActive, buildModelLockUpdate, getEarliestModelLockUntil, isBusyConcurrencyError, isPreflightTimeoutError, shouldLockConnectionForError, resolveConnectionCooldownMs, buildModelFailureBackoffUpdate, buildClearModelFailureUpdate, isRateLimitError } from "open-sse/services/accountFallback.js";
 import { MAX_RATE_LIMIT_COOLDOWN_MS } from "open-sse/config/errorConfig.js";
@@ -255,7 +255,7 @@ export async function markAccountUnavailable(connectionId, status, errorText, pr
   // Per-model consecutive-failure exponential backoff: a model that keeps
   // dying gets blocked for base*2^(n-1), reset to base on a successful call.
   let failureCounterUpdate = {};
-  if (!lockConnection && model) {
+  if (!lockConnection && model && !preflightTimeout) {
     const isRateLimit = isRateLimitError(status, reasonText);
     const backoff = buildModelFailureBackoffUpdate(conn, model, { isRateLimit });
     cooldownMs = Math.max(cooldownMs || 0, backoff.cooldownMs);
