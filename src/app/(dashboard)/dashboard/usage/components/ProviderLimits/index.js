@@ -204,9 +204,6 @@ export default function ProviderLimits() {
     setErrors((prev) => ({ ...prev, [connectionId]: null }));
 
     try {
-      console.log(
-        `[ProviderLimits] Fetching quota for ${provider} (${connectionId})`,
-      );
       const response = await fetch(`/api/usage/${connectionId}`);
 
       if (!response.ok) {
@@ -215,19 +212,10 @@ export default function ProviderLimits() {
 
         // Handle different error types gracefully
         if (response.status === 404) {
-          // Connection not found - skip silently
-          console.warn(
-            `[ProviderLimits] Connection not found for ${provider}, skipping`,
-          );
           return;
         }
 
         if (response.status === 401) {
-          // Auth error - show message instead of throwing
-          console.warn(
-            `[ProviderLimits] Auth error for ${provider}:`,
-            errorMsg,
-          );
           const quotaEntry = {
             quotas: [],
             message: errorMsg,
@@ -244,7 +232,6 @@ export default function ProviderLimits() {
       }
 
       const data = await response.json();
-      console.log(`[ProviderLimits] Got quota for ${provider}:`, data);
 
       // Parse quota data using provider-specific parser
       const parsedQuotas = parseQuotaData(provider, data);
@@ -274,6 +261,97 @@ export default function ProviderLimits() {
       setLoading((prev) => ({ ...prev, [connectionId]: false }));
     }
   }, []);
+
+  // Batch-fetch quotas for many connections in a single request.
+  // Replaces the N+1 per-connection fetches that bottlenecked the quota page.
+  const fetchQuotaBatch = useCallback(async (conns) => {
+    if (!conns || conns.length === 0) return;
+    const ids = conns.map((c) => c.id);
+    const providerById = new Map(conns.map((c) => [c.id, c.provider]));
+
+    setLoading((prev) => {
+      const next = { ...prev };
+      for (const id of ids) next[id] = true;
+      return next;
+    });
+    setErrors((prev) => {
+      const next = { ...prev };
+      for (const id of ids) next[id] = null;
+      return next;
+    });
+
+    try {
+      const response = await fetch("/api/usage/batch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ connectionIds: ids }),
+      });
+
+      if (!response.ok) {
+        // Batch endpoint unavailable - fall back to per-connection fetch
+        await Promise.all(conns.map((c) => fetchQuota(c.id, c.provider)));
+        return;
+      }
+
+      const payload = await response.json();
+      const results = payload?.results || {};
+
+      const newQuotaData = {};
+      const newErrors = {};
+
+      for (const id of ids) {
+        const provider = providerById.get(id);
+        const result = results[id];
+
+        if (!result) {
+          newErrors[id] = "No quota response";
+          continue;
+        }
+
+        if (result.ok) {
+          const data = result.data;
+          const parsedQuotas = parseQuotaData(provider, data);
+          newQuotaData[id] = {
+            quotas: parsedQuotas,
+            plan: data?.plan || null,
+            message: data?.message || null,
+            raw: data,
+          };
+        } else if (result.status === 404) {
+          // Connection not found - skip silently
+        } else if (result.status === 401) {
+          newQuotaData[id] = { quotas: [], message: result.error };
+        } else {
+          newErrors[id] = result.error || "Failed to fetch quota";
+        }
+      }
+
+      if (Object.keys(newQuotaData).length > 0) {
+        setQuotaData((prev) => ({ ...prev, ...newQuotaData }));
+        for (const [id, entry] of Object.entries(newQuotaData)) {
+          setQuotaCache(id, entry);
+        }
+      }
+      if (Object.keys(newErrors).length > 0) {
+        setErrors((prev) => ({ ...prev, ...newErrors }));
+      }
+    } catch (error) {
+      console.error("[ProviderLimits] Batch quota fetch failed:", error);
+      setErrors((prev) => {
+        const next = { ...prev };
+        for (const id of ids) {
+          if (!next[id]) next[id] = error.message || "Failed to fetch quota";
+        }
+        return next;
+      });
+    } finally {
+      setLoading((prev) => {
+        const next = { ...prev };
+        for (const id of ids) next[id] = false;
+        return next;
+      });
+    }
+  }, [fetchQuota]);
 
   // Refresh quota for a specific provider
   const refreshProvider = useCallback(
@@ -439,8 +517,9 @@ export default function ProviderLimits() {
 
     try {
       const visibleConnections = await fetchConnections(page);
+      const toFetch = visibleConnections.filter(shouldFetch);
 
-      setLoading(buildLoadingState(visibleConnections));
+      setLoading(buildLoadingState(toFetch));
       setErrors((prev) =>
         filterQuotaStateByConnections(prev, visibleConnections),
       );
@@ -448,11 +527,7 @@ export default function ProviderLimits() {
         filterQuotaStateByConnections(prev, visibleConnections),
       );
 
-      await Promise.all(
-        visibleConnections
-          .filter(shouldFetch)
-          .map((conn) => fetchQuota(conn.id, conn.provider)),
-      );
+      await fetchQuotaBatch(toFetch);
 
       setLastUpdated(new Date());
     } catch (error) {
@@ -460,7 +535,7 @@ export default function ProviderLimits() {
     } finally {
       setRefreshingAll(false);
     }
-  }, [refreshingAll, fetchConnections, fetchQuota, page]);
+  }, [refreshingAll, fetchConnections, fetchQuotaBatch, page]);
 
   useEffect(() => {
     const initializeData = async () => {
@@ -468,23 +543,34 @@ export default function ProviderLimits() {
       const visibleConnections = await fetchConnections(page);
       setConnectionsLoading(false);
 
-      // Always fetch fresh quota on mount, no cache display
-      setLoading(buildLoadingState(visibleConnections));
+      // Stale-while-revalidate: show cached quota immediately, only show
+      // loading skeletons for connections without cached data.
+      const cache = getQuotaCache();
+      const cachedVisible = {};
+      const loadingState = {};
+      for (const conn of visibleConnections) {
+        if (cache[conn.id]) {
+          cachedVisible[conn.id] = cache[conn.id];
+        } else {
+          loadingState[conn.id] = true;
+        }
+      }
+      setQuotaData((prev) => ({
+        ...filterQuotaStateByConnections(prev, visibleConnections),
+        ...cachedVisible,
+      }));
+      setLoading(loadingState);
       setErrors((prev) =>
         filterQuotaStateByConnections(prev, visibleConnections),
       );
-      setQuotaData((prev) =>
-        filterQuotaStateByConnections(prev, visibleConnections),
-      );
 
-      await Promise.all(
-        visibleConnections.map((conn) => fetchQuota(conn.id, conn.provider)),
-      );
+      // Fetch fresh quota in background via a single batch request
+      await fetchQuotaBatch(visibleConnections);
       setLastUpdated(new Date());
     };
 
     initializeData();
-  }, [fetchConnections, fetchQuota, page]);
+  }, [fetchConnections, fetchQuotaBatch, page]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
