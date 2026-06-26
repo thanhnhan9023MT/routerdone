@@ -97,7 +97,7 @@ function normalizeRecentRequest(entry) {
     timestamp: entry.timestamp,
     model: entry.model,
     provider: entry.provider || "",
-    displayModel: comboName || requestedModel || entry.model || "unknown",
+    displayModel: actualModel || entry.model || requestedModel || comboName || "unknown",
     requestedModel,
     comboName,
     comboRunId: meta.comboRunId || null,
@@ -120,15 +120,14 @@ function requestGroupKey(entry) {
 
 function preferRecentRequest(current, next) {
   if (!current) return next;
-  const currentIsCombo = Boolean(current.comboName || current.requestedModel?.includes("fallback") || current.displayModel?.includes("fallback"));
-  const nextIsCombo = Boolean(next.comboName || next.requestedModel?.includes("fallback") || next.displayModel?.includes("fallback"));
-  if (nextIsCombo && !currentIsCombo) {
-    return { ...next, actualProvider: current.actualProvider || next.actualProvider, actualModel: current.actualModel || next.actualModel };
-  }
-  if (!nextIsCombo && currentIsCombo) {
-    return { ...current, actualProvider: next.actualProvider || current.actualProvider, actualModel: next.actualModel || current.actualModel };
-  }
-  return new Date(next.timestamp) > new Date(current.timestamp) ? next : current;
+  const chosen = new Date(next.timestamp) > new Date(current.timestamp) ? next : current;
+  const other = chosen === next ? current : next;
+  return {
+    ...chosen,
+    actualProvider: chosen.actualProvider || other.actualProvider,
+    actualModel: chosen.actualModel || other.actualModel,
+    displayModel: chosen.actualModel || other.actualModel || chosen.model || other.model || chosen.displayModel || other.displayModel,
+  };
 }
 
 function collapseRecentRequests(entries) {

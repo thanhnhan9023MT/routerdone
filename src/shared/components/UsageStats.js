@@ -56,6 +56,8 @@ const RECENT_REQUEST_LIMIT = 20;
 
 function RecentRequests({ requests = [] }) {
   const [, setTick] = useState(0);
+  const scrollRef = useRef(null);
+  const shouldTailScroll = useRef(true);
 
   // Single timer for the whole list instead of one per row
   useEffect(() => {
@@ -64,7 +66,20 @@ function RecentRequests({ requests = [] }) {
     return () => clearInterval(timer);
   }, [requests.length]);
 
-  const capped = requests.slice(0, RECENT_REQUEST_LIMIT);
+  const capped = useMemo(() => requests.slice(0, RECENT_REQUEST_LIMIT).reverse(), [requests]);
+  const scrollKey = capped.map((r) => [r.timestamp, r.model, r.displayModel, r.actualProvider, r.actualModel, r.promptTokens, r.completionTokens, r.status].join(":")).join("|");
+
+  // Tail the live feed while the user is already at the newest rows.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el || !shouldTailScroll.current) return;
+    el.scrollTop = el.scrollHeight;
+  }, [scrollKey]);
+
+  const handleScroll = useCallback((event) => {
+    const el = event.currentTarget;
+    shouldTailScroll.current = el.scrollHeight - el.scrollTop - el.clientHeight <= 48;
+  }, []);
 
   return (
     <Card className="flex min-w-0 flex-col overflow-hidden" padding="sm" style={{ height: 480 }}>
@@ -76,7 +91,7 @@ function RecentRequests({ requests = [] }) {
       {!requests.length ? (
         <div className="flex-1 flex items-center justify-center text-text-muted text-sm">No requests yet.</div>
       ) : (
-        <div className="flex-1 overflow-y-auto">
+        <div ref={scrollRef} onScroll={handleScroll} className="flex-1 overflow-y-auto">
           <table className="w-full min-w-[300px] border-collapse text-xs">
             <thead className="sticky top-0 bg-bg z-10">
               <tr className="border-b border-border">
@@ -91,10 +106,10 @@ function RecentRequests({ requests = [] }) {
               {capped.map((r, i) => {
                 const isPending = r.status === "PENDING" || r.status === "pending";
                 const ok = !r.status || r.status === "ok" || r.status === "success" || isPending;
-                const actualName = r.actualModel || r.model;
+                const actualName = r.actualModel || r.displayModel || r.model;
                 const actualModel = r.actualProvider && actualName ? `${r.actualProvider}/${actualName}` : actualName || r.provider || r.model;
                 return (
-                  <tr key={i} className="hover:bg-bg-subtle transition-colors">
+                  <tr key={[r.timestamp, r.model, r.actualModel, i].filter(Boolean).join("-")} className="hover:bg-bg-subtle transition-colors">
                     <td className="py-1.5">
                       <span className={`block w-1.5 h-1.5 rounded-full ${ok ? "bg-success" : "bg-error"}`} />
                     </td>
