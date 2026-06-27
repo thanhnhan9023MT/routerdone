@@ -116,6 +116,8 @@ export const FORCE_STREAM_UPSTREAM_MODELS = new Set([
 ]);
 
 export function shouldForceStreamUpstream(provider, model) {
+  if (provider === "openai-compatible") return true;
+  if (typeof provider === "string" && provider.startsWith("openai-compatible-")) return true;
   if (FORCE_STREAM_UPSTREAM_PROVIDERS.has(provider)) return true;
   if (model && FORCE_STREAM_UPSTREAM_MODELS.has(`${provider}/${model}`)) return true;
   return false;

@@ -98,7 +98,7 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   const acceptHeader = clientRawRequest?.headers?.accept || "";
   const clientPrefersJson = acceptHeader.includes("application/json");
   const clientPrefersSSE = acceptHeader.includes("text/event-stream");
-  if (clientPrefersJson && !clientPrefersSSE && body.stream !== true) {
+  if (clientPrefersJson && !clientPrefersSSE && body.stream !== true && !providerRequiresStreaming) {
     stream = false;
   }
 
@@ -144,6 +144,9 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
     toolNameMap = translatedBody._toolNameMap;
     delete translatedBody._toolNameMap;
     translatedBody.model = upstreamModel;
+  }
+  if (translatedBody && typeof translatedBody === "object") {
+    translatedBody.stream = stream;
   }
 
   // Dedupe duplicate built-in tools when equivalent MCP tools are present (Claude clients only).
