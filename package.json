@@ -1,6 +1,6 @@
 {
   "name": "routerdone-app",
-  "version": "0.5.77",
+  "version": "0.5.78",
   "description": "OpenAI-compatible local AI gateway and routing dashboard",
   "private": true,
   "scripts": {
