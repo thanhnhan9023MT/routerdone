@@ -14,7 +14,15 @@ import {
 } from "recharts";
 import Card from "@/shared/components/Card";
 
-const USAGE_CHART_CACHE_PREFIX = "routerdone:usage-chart:";
+const USAGE_CHART_CACHE_PREFIX = "routerdone:usage-chart:v2:";
+
+function getBrowserTimeZone() {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || "";
+  } catch {
+    return "";
+  }
+}
 
 function readCache(key) {
   if (typeof window === "undefined") return null;
@@ -47,11 +55,14 @@ function UsageChart({ period = "7d" }) {
   const [viewMode, setViewMode] = useState("tokens");
 
   const fetchData = useCallback(async () => {
-    const cacheKey = `${USAGE_CHART_CACHE_PREFIX}${period}`;
+    const timeZone = getBrowserTimeZone();
+    const cacheKey = `${USAGE_CHART_CACHE_PREFIX}${period}:${timeZone || "server"}`;
     const cached = readCache(cacheKey);
     setLoading(!Array.isArray(cached?.data));
     try {
-      const res = await fetch(`/api/usage/chart?period=${period}`);
+      const params = new URLSearchParams({ period });
+      if (timeZone) params.set("tz", timeZone);
+      const res = await fetch(`/api/usage/chart?${params.toString()}`, { cache: "no-store" });
       if (res.ok) {
         const json = await res.json();
         setData(json);
@@ -65,7 +76,8 @@ function UsageChart({ period = "7d" }) {
   }, [period]);
 
   useEffect(() => {
-    const cached = readCache(`${USAGE_CHART_CACHE_PREFIX}${period}`);
+    const timeZone = getBrowserTimeZone();
+    const cached = readCache(`${USAGE_CHART_CACHE_PREFIX}${period}:${timeZone || "server"}`);
     if (Array.isArray(cached?.data)) {
       setData(cached.data);
       setLoading(false);

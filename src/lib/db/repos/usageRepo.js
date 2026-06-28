@@ -9,8 +9,8 @@ const CONN_CACHE_TTL_MS = 30 * 1000;
 const PERIOD_MS = { "24h": 86400000, "7d": 604800000, "30d": 2592000000, "60d": 5184000000 };
 const DEFAULT_USAGE_TIME_ZONE = "Asia/Saigon";
 
-function getUsageTimeZone() {
-  const timeZone = process.env.TZ || process.env.NEXT_PUBLIC_TZ || DEFAULT_USAGE_TIME_ZONE;
+function getUsageTimeZone(preferredTimeZone) {
+  const timeZone = preferredTimeZone || process.env.TZ || process.env.NEXT_PUBLIC_TZ || DEFAULT_USAGE_TIME_ZONE;
   try {
     new Intl.DateTimeFormat("en-US", { timeZone }).format(new Date());
     return timeZone;
@@ -737,10 +737,10 @@ export async function getUsageStats(period = "all") {
   return stats;
 }
 
-export async function getChartData(period = "7d") {
+export async function getChartData(period = "7d", preferredTimeZone) {
   const db = await getAdapter();
   const now = Date.now();
-  const timeZone = getUsageTimeZone();
+  const timeZone = getUsageTimeZone(preferredTimeZone);
 
   if (period === "today") {
     const bucketCount = 24;
