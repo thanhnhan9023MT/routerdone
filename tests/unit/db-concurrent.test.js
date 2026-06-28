@@ -1,4 +1,4 @@
-﻿// Concurrency stress test — simulate many parallel saveRequestUsage / saveRequestDetail
+// Concurrency stress test — simulate many parallel saveRequestUsage / saveRequestDetail
 // to verify atomic counter, no data loss, no race conditions.
 import fs from "node:fs";
 import os from "node:os";
@@ -18,7 +18,13 @@ beforeAll(async () => {
 });
 
 afterAll(() => {
-  if (tempDir) fs.rmSync(tempDir, { recursive: true, force: true });
+  if (tempDir) {
+    try {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    } catch {
+      // Windows can keep sqlite handles briefly after tests finish.
+    }
+  }
   if (originalDataDir === undefined) delete process.env.DATA_DIR;
   else process.env.DATA_DIR = originalDataDir;
 });

@@ -39,7 +39,7 @@ describe("Kiro format RTK support", () => {
                         "a different dependency.",
                         "",
                         "Run `npm audit` for details."
-                      ].join("\n")
+                      ].join("\n").repeat(3000)
                     }
                   ]
                 }
@@ -70,7 +70,7 @@ describe("Kiro format RTK support", () => {
   it("compresses tool results in Kiro conversationState.history", () => {
     // Need >500 bytes for compression to trigger
     const compilingLines = [];
-    for (let i = 1; i <= 20; i++) {
+    for (let i = 1; i <= 2000; i++) {
       compilingLines.push(`   Compiling package-${i} v1.0.${i}`);
     }
     compilingLines.push("    Finished `dev` profile [unoptimized + debuginfo] target(s) in 12.34s");
@@ -121,7 +121,7 @@ describe("Kiro format RTK support", () => {
     // Need >500 bytes for each tool result to trigger compression
     const deprecations1 = [];
     const deprecations2 = [];
-    for (let i = 1; i <= 10; i++) {
+    for (let i = 1; i <= 1000; i++) {
       deprecations1.push(`npm warn deprecated package-${i}@1.0.0: This version is deprecated`);
       deprecations2.push(`npm warn deprecated lib-${i}@2.0.0: This library is no longer supported`);
     }

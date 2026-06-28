@@ -16,7 +16,12 @@
  * so tests run without Cloudflare Workers runtime.
  */
 
+import fs from "node:fs";
+import path from "node:path";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+
+const CLOUD_EMBEDDINGS_PATH = path.resolve(__dirname, "../../cloud/src/handlers/embeddings.js");
+const CLOUD_OK = fs.existsSync(CLOUD_EMBEDDINGS_PATH);
 
 // ─── Module mocks (hoisted before imports) ───────────────────────────────────
 
@@ -58,11 +63,21 @@ vi.mock("../../cloud/src/services/storage.js", () => ({
 
 // ─── Imports (after mocks) ────────────────────────────────────────────────────
 
-import { handleEmbeddings } from "../../cloud/src/handlers/embeddings.js";
-import { getModelInfoCore } from "../../open-sse/services/model.js";
-import { handleEmbeddingsCore } from "../../open-sse/handlers/embeddingsCore.js";
-import { parseApiKey, extractBearerToken } from "../../cloud/src/utils/apiKey.js";
-import { getMachineData, saveMachineData } from "../../cloud/src/services/storage.js";
+let handleEmbeddings;
+let getModelInfoCore;
+let handleEmbeddingsCore;
+let parseApiKey;
+let extractBearerToken;
+let getMachineData;
+let saveMachineData;
+
+if (CLOUD_OK) {
+  ({ handleEmbeddings } = await import("../../cloud/src/handlers/embeddings.js"));
+  ({ getModelInfoCore } = await import("../../open-sse/services/model.js"));
+  ({ handleEmbeddingsCore } = await import("../../open-sse/handlers/embeddingsCore.js"));
+  ({ parseApiKey, extractBearerToken } = await import("../../cloud/src/utils/apiKey.js"));
+  ({ getMachineData, saveMachineData } = await import("../../cloud/src/services/storage.js"));
+}
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -115,7 +130,7 @@ function makeRequest(method = "POST", body = null, authHeader = `Bearer ${VALID_
 
 // ─── Tests: CORS OPTIONS ──────────────────────────────────────────────────────
 
-describe("handleEmbeddings — CORS OPTIONS", () => {
+describe.skipIf(!CLOUD_OK)("handleEmbeddings — CORS OPTIONS", () => {
   it("OPTIONS request → 200 with Access-Control-Allow-Origin: *", async () => {
     const req = makeRequest("OPTIONS", null, null);
     const res = await handleEmbeddings(req, makeEnv(), {});
@@ -135,7 +150,7 @@ describe("handleEmbeddings — CORS OPTIONS", () => {
 
 // ─── Tests: Authentication ────────────────────────────────────────────────────
 
-describe("handleEmbeddings — authentication", () => {
+describe.skipIf(!CLOUD_OK)("handleEmbeddings — authentication", () => {
   beforeEach(() => {
     vi.mocked(extractBearerToken).mockReturnValue(null);
     vi.mocked(parseApiKey).mockResolvedValue(null);
@@ -230,7 +245,7 @@ describe("handleEmbeddings — authentication", () => {
 
 // ─── Tests: Body validation ───────────────────────────────────────────────────
 
-describe("handleEmbeddings — body validation", () => {
+describe.skipIf(!CLOUD_OK)("handleEmbeddings — body validation", () => {
   beforeEach(() => {
     vi.mocked(extractBearerToken).mockReturnValue(VALID_API_KEY);
     vi.mocked(parseApiKey).mockResolvedValue({ machineId: MACHINE_ID, keyId: "key01", isNewFormat: true });
@@ -289,7 +304,7 @@ describe("handleEmbeddings — body validation", () => {
 
 // ─── Tests: Happy path — valid request ────────────────────────────────────────
 
-describe("handleEmbeddings — valid request (happy path)", () => {
+describe.skipIf(!CLOUD_OK)("handleEmbeddings — valid request (happy path)", () => {
   beforeEach(() => {
     vi.mocked(extractBearerToken).mockReturnValue(VALID_API_KEY);
     vi.mocked(parseApiKey).mockResolvedValue({ machineId: MACHINE_ID, keyId: "key01", isNewFormat: true });
@@ -377,7 +392,7 @@ describe("handleEmbeddings — valid request (happy path)", () => {
 
 // ─── Tests: Rate limiting ──────────────────────────────────────────────────────
 
-describe("handleEmbeddings — rate limit fallback", () => {
+describe.skipIf(!CLOUD_OK)("handleEmbeddings — rate limit fallback", () => {
   beforeEach(() => {
     vi.mocked(extractBearerToken).mockReturnValue(VALID_API_KEY);
     vi.mocked(parseApiKey).mockResolvedValue({ machineId: MACHINE_ID, keyId: "key01", isNewFormat: true });
@@ -470,7 +485,7 @@ describe("handleEmbeddings — rate limit fallback", () => {
 
 // ─── Tests: machineId-override (old-format URL path) ─────────────────────────
 
-describe("handleEmbeddings — machineId override path", () => {
+describe.skipIf(!CLOUD_OK)("handleEmbeddings — machineId override path", () => {
   beforeEach(() => {
     // When machineId is provided via URL, no apiKey parsing needed for machineId
     vi.mocked(getMachineData).mockResolvedValue(makeMachineData());

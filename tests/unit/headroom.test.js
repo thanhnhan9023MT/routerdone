@@ -39,9 +39,10 @@ describe("compressWithHeadroom", () => {
     }), { status: 200 }));
     const body = { input: [{ role: "user", content: "long" }] };
 
-    await compressWithHeadroom(body, { enabled: true, url: "http://localhost:8787" });
+    await compressWithHeadroom(body, { enabled: true, url: "http://localhost:8787", model: "gpt-4o", format: "openai-responses" });
 
-    expect(body.input[0].content).toBe("short");
+    expect(body.input[0]).toMatchObject({ type: "message", role: "user" });
+    expect(body.input[0].content[0]).toEqual({ type: "input_text", text: "short" });
   });
 
   it("fails open on bad response", async () => {

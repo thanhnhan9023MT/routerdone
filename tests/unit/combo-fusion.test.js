@@ -52,21 +52,21 @@ describe("fusion combo", () => {
     expect(seen[3]).toBe("p/judge");
 
     // Panel calls are non-streaming with tools stripped.
-    for (const [body, model, isPanel] of handleSingleModel.mock.calls.filter(([, m]) => m !== "p/judge")) {
+    for (const [body, model, routeInfo] of handleSingleModel.mock.calls.filter(([, m]) => m !== "p/judge")) {
       expect(body.stream).toBe(false);
       expect(body.tools).toBeUndefined();
-      expect(isPanel).toBe(true);
+      expect(routeInfo?.isPanel).toBe(true);
     }
 
     // Judge call carries every panel answer + keeps the client's stream flag.
-    const [judgeBody, , isPanel] = handleSingleModel.mock.calls.find(([, m]) => m === "p/judge");
+    const [judgeBody, , routeInfo] = handleSingleModel.mock.calls.find(([, m]) => m === "p/judge");
     const judgeText = judgeBody.messages.at(-1).content;
     expect(judgeText).toContain("ans-p/a");
     expect(judgeText).toContain("ans-p/b");
     expect(judgeText).toContain("ans-p/c");
     expect(judgeText).toContain("Source 1");
     expect(judgeBody.stream).toBe(true);
-    expect(isPanel).toBeUndefined();
+    expect(routeInfo?.isPanel).toBeFalsy();
 
     expect(res.ok).toBe(true);
   });
@@ -161,7 +161,7 @@ describe("fusion combo", () => {
     });
 
     // Panel calls keep every turn but tool turns are flattened to assistant prose.
-    const panelCalls = handleSingleModel.mock.calls.filter(([,, isPanel]) => isPanel === true);
+    const panelCalls = handleSingleModel.mock.calls.filter(([,, routeInfo]) => routeInfo?.isPanel === true);
     expect(panelCalls.length).toBe(2);
     for (const [panelBody] of panelCalls) {
       expect(panelBody.tools).toBeUndefined();
@@ -200,7 +200,7 @@ describe("fusion combo", () => {
       judgeModel: "p/judge"
     });
 
-    const panelCalls = handleSingleModel.mock.calls.filter(([,, isPanel]) => isPanel === true);
+    const panelCalls = handleSingleModel.mock.calls.filter(([,, routeInfo]) => routeInfo?.isPanel === true);
     expect(panelCalls.length).toBe(2);
     const panelBody = panelCalls[0][0];
     

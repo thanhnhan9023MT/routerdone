@@ -223,7 +223,10 @@ describe("PR #1175 - integration with compressMessages", () => {
           content: [
             { type: "tool_result", tool_use_id: "id1", content: toolResultText }
           ]
-        }
+        },
+        { role: "assistant", content: "newer" },
+        { role: "user", content: "newer" },
+        { role: "assistant", content: "newer" }
       ]
     };
   }

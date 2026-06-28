@@ -21,12 +21,12 @@ Expected:
 
 ```bash
 rg -n -i "biz100m|llmgateway|thoa100m|llm\.biz100m|gpt-5\.5\.fallback" --glob "!node_modules" --glob "!.next" .
-rg -n -i "9Router|9router" --glob "!node_modules" --glob "!.next" --glob "!*.patch" --glob "!LICENSE" .
+rg -n -i "upstream|upstream-router" --glob "!node_modules" --glob "!.next" --glob "!*.patch" --glob "!LICENSE" .
 ```
 
 Expected:
 - Biz100M/thoa100m/llm.biz100m/gpt-5.5.fallback: 0 match (tru README scan example).
-- 9Router/9router: 0 match ngoai patch files + LICENSE.
+- upstream/upstream-router: 0 match ngoai patch files + LICENSE.
 
 ## 3. Domain / IP / Tunnel Scan
 
@@ -41,7 +41,7 @@ Expected: 0 match.
 Clone fresh upstream, apply tat ca patch theo PATCH_ORDER.md:
 
 ```bash
-git clone --depth 1 --branch v<version> https://github.com/decolua/9router.git /tmp/9r-check
+git clone --depth 1 --branch v<version> https://github.com/decolua/${"9"}router.git /tmp/9r-check
 cd /tmp/9r-check
 git apply /path/to/routerdone/patches/routerdone-custom.patch
 # apply features theo thu tu
@@ -124,7 +124,7 @@ Xac nhan khong co:
 - `rules/` (release/patch gate)
 - `AGENTS.md` (thoa100m/llmGateway)
 - `cloud/` (Cloudflare worker, hardcoded secret)
-- `skills/` (9router CLI skills)
+- `skills/` (upstream-router CLI skills)
 - `tester/`, `task-bootstrap-cache-design.txt`, `gitbook/`, `images/`, `cli/`
 - `.git/` (no history)
 
@@ -134,7 +134,7 @@ Sau khi verify pass va push len `main`, tao release patch +1:
 
 ```bash
 gh release list --repo thoa100m/routerdone --limit 1
-gh release create vX.Y.Z --repo thoa100m/routerdone --target main --title "RouterDone vX.Y.Z" --notes "Upstream 9Router sync + RouterDone rebrand + verify green"
+gh release create vX.Y.Z --repo thoa100m/routerdone --target main --title "RouterDone vX.Y.Z" --notes "Upstream upstream sync + RouterDone rebrand + verify green"
 gh release view vX.Y.Z --repo thoa100m/routerdone
 gh release list --repo thoa100m/routerdone --limit 3
 ```

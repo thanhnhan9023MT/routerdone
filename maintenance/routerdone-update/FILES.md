@@ -1,4 +1,4 @@
-﻿# RouterDone File Map
+# RouterDone File Map
 
 Danh sach file lien quan den ban RouterDone public, nhom theo chuc nang.
 
@@ -72,7 +72,7 @@ Danh sach file lien quan den ban RouterDone public, nhom theo chuc nang.
 | `maintenance/routerdone-update/REBRAND_RULES.md` | Quy tac rebrand |
 | `maintenance/routerdone-update/VERIFY_CHECKLIST.md` | Checklist verify truoc push |
 | `maintenance/routerdone-update/FILES.md` | File map (file nay) |
-| `maintenance/routerdone-update/sync-routerdone-from-9router.ps1` | Script update tu dong |
+| `maintenance/routerdone-update/sync-routerdone-from-upstream.ps1` | Script update tu dong |
 
 ## Da Loai Bo (KHONG co trong public)
 
@@ -83,7 +83,7 @@ Danh sach file lien quan den ban RouterDone public, nhom theo chuc nang.
 | `rules/` | Release/patch gate thoa100m-specific |
 | `AGENTS.md` | thoa100m/llmGateway/Codekit |
 | `cloud/` | Cloudflare worker, hardcoded secret, owner infra |
-| `skills/` | 9router CLI skills (branded) |
+| `skills/` | upstream CLI skills (branded) |
 | `tester/` | Internal test scratch |
 | `task-bootstrap-cache-design.txt` | Internal design doc |
 | `gitbook/` | Upstream gitbook (empty) |

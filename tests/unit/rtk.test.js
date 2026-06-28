@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { compressMessages, setRtkEnabled, isRtkEnabled, formatRtkLog } from "../../open-sse/rtk/index.js";
+import { compressMessages, formatRtkLog } from "../../open-sse/rtk/index.js";
 import { gitDiff } from "../../open-sse/rtk/filters/gitDiff.js";
 import { gitStatus } from "../../open-sse/rtk/filters/gitStatus.js";
 import { grep } from "../../open-sse/rtk/filters/grep.js";
@@ -53,13 +53,9 @@ function makeFindOutput() {
   return lines.join("\n");
 }
 
-describe("RTK flag", () => {
-  it("default off, toggle works", () => {
-    setRtkEnabled(false);
-    expect(isRtkEnabled()).toBe(false);
-    setRtkEnabled(true);
-    expect(isRtkEnabled()).toBe(true);
-    setRtkEnabled(false);
+describe("RTK enable flag", () => {
+  it("compressMessages returns null when the per-call flag is false", () => {
+    expect(compressMessages({ messages: [] }, false)).toBeNull();
   });
 });
 
@@ -245,88 +241,98 @@ describe("safeApply", () => {
 });
 
 describe("compressMessages (disabled)", () => {
-  beforeEach(() => setRtkEnabled(false));
+
   it("returns null when disabled", () => {
     const body = { messages: [{ role: "tool", tool_call_id: "x", content: makeLongDiff() }] };
-    expect(compressMessages(body)).toBeNull();
+    expect(compressMessages(body, false)).toBeNull();
   });
 });
 
 describe("compressMessages (enabled)", () => {
-  beforeEach(() => setRtkEnabled(true));
+  function withNewerMessages(message) {
+    return {
+      messages: [
+        message,
+        { role: "assistant", content: "newer" },
+        { role: "user", content: "newer" },
+        { role: "assistant", content: "newer" }
+      ]
+    };
+  }
 
-  it("compresses OpenAI tool message (string content)", () => {
+  it("compresses OpenAI tool message (string content) once old enough", () => {
     const big = makeLongDiff();
-    const body = { messages: [{ role: "tool", tool_call_id: "call_1", content: big }] };
-    const stats = compressMessages(body);
+    const body = withNewerMessages({ role: "tool", tool_call_id: "call_1", content: big });
+    const stats = compressMessages(body, true);
     expect(stats.hits.length).toBeGreaterThan(0);
     expect(body.messages[0].content.length).toBeLessThan(big.length);
     expect(stats.bytesBefore).toBeGreaterThan(stats.bytesAfter);
   });
 
-  it("compresses Claude string-form tool_result", () => {
+  it("compresses Claude string-form tool_result once old enough", () => {
     const big = makeLongDiff();
-    const body = {
-      messages: [{
-        role: "user",
-        content: [{ type: "tool_result", tool_use_id: "toolu_1", content: big }]
-      }]
-    };
-    const stats = compressMessages(body);
+    const body = withNewerMessages({
+      role: "user",
+      content: [{ type: "tool_result", tool_use_id: "toolu_1", content: big }]
+    });
+    const stats = compressMessages(body, true);
     expect(stats.hits.length).toBeGreaterThan(0);
     expect(body.messages[0].content[0].content.length).toBeLessThan(big.length);
   });
 
-  it("compresses Claude array-form tool_result text parts", () => {
+  it("compresses Claude array-form tool_result text parts once old enough", () => {
     const big = makeLongDiff();
-    const body = {
-      messages: [{
-        role: "user",
-        content: [{
-          type: "tool_result",
-          tool_use_id: "toolu_1",
-          content: [{ type: "text", text: big }, { type: "text", text: "unchanged short" }]
-        }]
+    const body = withNewerMessages({
+      role: "user",
+      content: [{
+        type: "tool_result",
+        tool_use_id: "toolu_1",
+        content: [{ type: "text", text: big }, { type: "text", text: "unchanged short" }]
       }]
-    };
-    const stats = compressMessages(body);
+    });
+    const stats = compressMessages(body, true);
     expect(stats.hits.length).toBeGreaterThan(0);
     expect(body.messages[0].content[0].content[0].text.length).toBeLessThan(big.length);
-    // short part unchanged
     expect(body.messages[0].content[0].content[1].text).toBe("unchanged short");
+  });
+
+  it("skips recent tool_result below AGE_LIGHT_MIN_BYTES", () => {
+    const big = makeLongDiff();
+    const body = { messages: [{ role: "tool", tool_call_id: "call_1", content: big }] };
+    const stats = compressMessages(body, true);
+    expect(stats.hits.length).toBe(0);
+    expect(body.messages[0].content).toBe(big);
   });
 
   it("skips is_error tool_result", () => {
     const big = makeLongDiff();
-    const body = {
-      messages: [{
-        role: "user",
-        content: [{ type: "tool_result", tool_use_id: "toolu_1", content: big, is_error: true }]
-      }]
-    };
-    const stats = compressMessages(body);
+    const body = withNewerMessages({
+      role: "user",
+      content: [{ type: "tool_result", tool_use_id: "toolu_1", content: big, is_error: true }]
+    });
+    const stats = compressMessages(body, true);
     expect(stats.hits.length).toBe(0);
     expect(body.messages[0].content[0].content).toBe(big);
   });
 
   it("skips below MIN_COMPRESS_SIZE (<500 bytes)", () => {
     const small = "diff --git a/x b/x\n@@ -1 +1 @@\n+a";
-    const body = { messages: [{ role: "tool", tool_call_id: "x", content: small }] };
-    const stats = compressMessages(body);
+    const body = withNewerMessages({ role: "tool", tool_call_id: "x", content: small });
+    const stats = compressMessages(body, true);
     expect(stats.hits.length).toBe(0);
     expect(body.messages[0].content).toBe(small);
   });
 
   it("never produces empty content (R14 guard)", () => {
     const input = "a".repeat(1000);
-    const body = { messages: [{ role: "tool", tool_call_id: "x", content: input }] };
-    compressMessages(body);
+    const body = withNewerMessages({ role: "tool", tool_call_id: "x", content: input });
+    compressMessages(body, true);
     expect(body.messages[0].content.length).toBeGreaterThan(0);
   });
 
   it("skips when body has no messages", () => {
-    expect(compressMessages({})).toBeNull();
-    expect(compressMessages({ messages: null })).toBeNull();
+    expect(compressMessages({}, true)).toBeNull();
+    expect(compressMessages({ messages: null }, true)).toBeNull();
   });
 
   it("handles mix of messages without crashing", () => {
@@ -336,15 +342,17 @@ describe("compressMessages (enabled)", () => {
         { role: "user", content: "hi" },
         { role: "assistant", content: null, tool_calls: [{ id: "c1", function: { name: "x", arguments: "{}" } }] },
         { role: "tool", tool_call_id: "c1", content: makeGrepOutput() },
-        { role: "user", content: [{ type: "text", text: "next" }] }
+        { role: "user", content: [{ type: "text", text: "next" }] },
+        { role: "assistant", content: "newer" },
+        { role: "user", content: "newer" },
+        { role: "assistant", content: "newer" }
       ]
     };
-    const stats = compressMessages(body);
+    const stats = compressMessages(body, true);
     expect(stats).not.toBeNull();
     expect(stats.hits.length).toBeGreaterThan(0);
   });
 });
-
 describe("formatRtkLog", () => {
   it("returns null when no hits", () => {
     expect(formatRtkLog({ bytesBefore: 0, bytesAfter: 0, hits: [] })).toBeNull();

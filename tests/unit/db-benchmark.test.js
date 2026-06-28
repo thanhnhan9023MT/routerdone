@@ -1,4 +1,4 @@
-﻿// Benchmark: SQLite vs lowdb on equivalent workloads.
+// Benchmark: SQLite vs lowdb on equivalent workloads.
 // Run: cd app/tests && npm test -- db-benchmark
 import fs from "node:fs";
 import os from "node:os";
@@ -8,6 +8,7 @@ import { describe, it, beforeAll, afterAll, vi } from "vitest";
 const N_ITEMS = 500;
 const N_QUERIES = 200;
 
+const LOWDB_AVAILABLE = await import("lowdb").then(() => true).catch(() => false);
 const originalDataDir = process.env.DATA_DIR;
 let tempSqlite, tempLowdb;
 let sqliteDb, lowDb;
@@ -43,13 +44,19 @@ beforeAll(async () => {
 });
 
 afterAll(() => {
-  if (tempSqlite) fs.rmSync(tempSqlite, { recursive: true, force: true });
-  if (tempLowdb) fs.rmSync(tempLowdb, { recursive: true, force: true });
+  for (const dir of [tempSqlite, tempLowdb]) {
+    if (!dir) continue;
+    try {
+      fs.rmSync(dir, { recursive: true, force: true });
+    } catch {
+      // Windows can keep sqlite handles briefly after tests finish.
+    }
+  }
   if (originalDataDir === undefined) delete process.env.DATA_DIR;
   else process.env.DATA_DIR = originalDataDir;
 });
 
-describe("DB Benchmark — SQLite vs Lowdb", () => {
+describe.skipIf(!LOWDB_AVAILABLE)("DB Benchmark — SQLite vs Lowdb", () => {
   it(`INSERT ${N_ITEMS} provider connections`, async () => {
     console.log(`\n[INSERT ${N_ITEMS}]`);
 

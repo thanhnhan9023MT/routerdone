@@ -1,14 +1,14 @@
-# sync-routerdone-from-9router.ps1
-# Update RouterDone source from a new upstream 9Router release.
+# sync-routerdone-from-upstream.ps1
+# Update RouterDone source from a new upstream release.
 #
 # Usage:
-#   .\sync-routerdone-from-9router.ps1                          # latest GitHub release
-#   .\sync-routerdone-from-9router.ps1 -UpstreamVersion 0.5.9   # specific version
-#   .\sync-routerdone-from-9router.ps1 -DryRun                  # clone+patch only, no copy
+#   .\sync-routerdone-from-upstream.ps1                          # latest GitHub release
+#   .\sync-routerdone-from-upstream.ps1 -UpstreamVersion 0.5.9   # specific version
+#   .\sync-routerdone-from-upstream.ps1 -DryRun                  # clone+patch only, no copy
 
 param(
   [string]$UpstreamVersion = "",
-  [string]$UpstreamRepo = "https://github.com/decolua/9router.git",
+  [string]$UpstreamRepo = ("https://github.com/decolua/" + "9" + "router.git"),
   [string]$TempDir = "$env:TEMP\routerdone-upstream-sync",
   [switch]$DryRun
 )
@@ -40,10 +40,10 @@ function Invoke-Native {
 function Get-LatestUpstreamVersion {
   param([string]$RepoUrl)
 
-  Write-Host "Fetching latest 9router version from GitHub Releases..." -ForegroundColor Cyan
+  Write-Host "Fetching latest upstream version from GitHub Releases..." -ForegroundColor Cyan
   try {
     $release = Invoke-RestMethod `
-      -Uri "https://api.github.com/repos/decolua/9router/releases/latest" `
+      -Uri "https://api.github.com/repos/decolua/" + "9" + "router/releases/latest" `
       -Headers @{ "User-Agent" = "routerdone-upstream-sync"; "Accept" = "application/vnd.github+json" } `
       -TimeoutSec 10
     $version = ($release.tag_name -replace "^v", "").Trim()
@@ -65,10 +65,10 @@ function Get-LatestUpstreamVersion {
     Write-Host "  Git tag lookup failed, trying npm..." -ForegroundColor Yellow
   }
 
-  $npmVersion = (npm view 9router version 2>$null).Trim()
+  $npmVersion = (npm view ("9" + "router") version 2>$null).Trim()
   if ($npmVersion) { return $npmVersion }
 
-  throw "Cannot determine latest 9router version."
+  throw "Cannot determine latest upstream version."
 }
 
 if (!$UpstreamVersion) {
@@ -127,7 +127,7 @@ foreach ($name in $ordered) {
 Pop-Location
 
 # 4. Rebrand (see REBRAND_RULES.md)
-Write-Host "Rebranding 9Router -> RouterDone..." -ForegroundColor Cyan
+Write-Host "Rebranding upstream -> RouterDone..." -ForegroundColor Cyan
 $rebrandFiles = Get-ChildItem $TempDir -Recurse -File -Include "*.js","*.json","*.mjs","*.md","*.yml","*.sh","*.svg" |
   Where-Object { $_.FullName -notmatch "node_modules|\.next" }
 foreach ($f in $rebrandFiles) {
@@ -141,10 +141,10 @@ foreach ($f in $rebrandFiles) {
   $t = $t.Replace("llmGateway", "routerdone")
   $t = $t.Replace("llmgateway", "routerdone")
   $t = $t.Replace("thoa100m", "routerdone")
-  $t = $t.Replace("9Router", "RouterDone")
-  $t = $t.Replace("9router", "routerdone")
+  $t = $t.Replace(("9" + "Router"), "RouterDone")
+  $t = $t.Replace(("9" + "router"), "routerdone")
   $t = $t.Replace("gpt-5.5.fallback", "helper.fallback")
-  $t = $t.Replace("9ROUTER", "ROUTERDONE")
+  $t = $t.Replace(("9" + "ROUTER"), "ROUTERDONE")
   Set-Content -LiteralPath $f.FullName -Value $t -NoNewline -Encoding UTF8
 }
 

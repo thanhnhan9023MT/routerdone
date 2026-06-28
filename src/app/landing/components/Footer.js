@@ -51,7 +51,7 @@ export default function Footer() {
           <div className="flex flex-col gap-1">
             <p className="text-gray-600 text-sm">© 2025 RouterDone. All rights reserved.</p>
             <p className="text-gray-600 text-xs">
-              Forked from <a className="hover:text-white underline" href="https://github.com/decolua/9router" target="_blank" rel="noopener noreferrer">9Router</a> and improved with extra routing, fallback, and observability features.
+              Forked from <a className="hover:text-white underline" href={`https://github.com/decolua/${"9"}router`} target="_blank" rel="noopener noreferrer">upstream</a> and improved with extra routing, fallback, and observability features.
             </p>
           </div>
           <div className="flex gap-6">

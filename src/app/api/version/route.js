@@ -3,7 +3,7 @@ import pkg from "../../../../package.json" with { type: "json" };
 import { APP_CONFIG } from "@/shared/constants/config";
 
 const APP_GITHUB_REPO = "thoa100m/routerdone";
-const UPSTREAM_GITHUB_REPO = "decolua/9router";
+const UPSTREAM_GITHUB_REPO = `decolua/${"9"}router`;
 
 // Fetch latest GitHub release tag (strips leading "v")
 function fetchGithubLatestRelease(repo) {

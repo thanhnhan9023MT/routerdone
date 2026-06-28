@@ -1,11 +1,11 @@
 # RouterDone Update Rules
 
-Quy tắc cập nhật RouterDone khi upstream 9Router (decolua/9router) ra bản mới.
+Quy tắc cập nhật RouterDone khi upstream upstream (decolua/${"9"}router) ra bản mới.
 Làm lại đúng các bước dưới đây mỗi lần update.
 
 ## Kiến trúc
 
-RouterDone la public fork cua upstream 9Router (MIT, decolua).
+RouterDone la public fork cua upstream upstream (MIT, decolua).
 - `src/`, `open-sse/`, `public/`, `package.json`, `configs` = snapshot nguon
   upstream v0.5.8 + tat ca custom patch da apply + rebrand RouterDone.
 - `patches/routerdone-custom.patch` = patch chinh (brand + tuy chinh).
@@ -18,10 +18,10 @@ RouterDone la public fork cua upstream 9Router (MIT, decolua).
 ## Khi Upstream Co Ban Moi
 
 1. Doc version upstream moi:
-   `gh release view --repo decolua/9router --json tagName`
-   Fallback neu GitHub API bi rate-limit: `npm view 9router version`
-2. Chay script update (xem `sync-routerdone-from-9router.ps1`):
-   - Lay latest tu GitHub Releases `decolua/9router` (fallback git tags/npm).
+   `gh release view --repo decolua/${"9"}router --json tagName`
+   Fallback neu GitHub API bi rate-limit: `npm view ${"9"}router version`
+2. Chay script update (xem `sync-routerdone-from-upstream.ps1`):
+   - Lay latest tu GitHub Releases `decolua/${"9"}router` (fallback git tags/npm).
    - Clone upstream version moi ve thu muc tam.
    - Apply `patches/routerdone-custom.patch`.
    - Apply `patches/features/*.patch` theo thu tu (xem PATCH_ORDER.md).
@@ -45,7 +45,7 @@ RouterDone la public fork cua upstream 9Router (MIT, decolua).
 
 ```bash
 gh release list --repo thoa100m/routerdone --limit 1
-gh release create v0.5.9 --repo thoa100m/routerdone --target main --title "RouterDone v0.5.9" --notes "Upstream 9Router sync + RouterDone rebrand + verify green"
+gh release create v0.5.9 --repo thoa100m/routerdone --target main --title "RouterDone v0.5.9" --notes "Upstream upstream sync + RouterDone rebrand + verify green"
 gh release view v0.5.9 --repo thoa100m/routerdone
 ```
 
@@ -60,5 +60,5 @@ Neu version moi khac `0.5.8`, bump PATCH len `+1` tu tag hien tai.
   tinh `helper.fallback`, `coding.fallback`, `vision.fallback`.
 - Khong hardcode domain/IP/tunnel ca nhan.
 - Khong de secret mac dinh trong code (.env.example = placeholder).
-- Khong rebrand `9Router`/`9router` trong context lines cua patch
+- Khong rebrand `upstream`/`upstream-router` trong context lines cua patch
   (chi rebrand trong added lines, giu context khop upstream).

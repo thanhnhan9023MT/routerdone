@@ -2,7 +2,7 @@
 
 Small feature patches live here and are applied after `patches/routerdone-custom.patch`.
 
-Keep new changes as separate focused patches so upstream 9Router updates are easier to verify:
+Keep new changes as separate focused patches so upstream updates are easier to verify:
 
 ```sh
 git apply patches/routerdone-custom.patch

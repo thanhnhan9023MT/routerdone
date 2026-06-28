@@ -1,7 +1,7 @@
-﻿# Rebrand Rules
+# Rebrand Rules
 
 Buoc rebrand chay SAU khi apply patch len fresh upstream clone.
-Muc dich: chuyen tat ca brand tu 9Router/Biz100M sang RouterDone,
+Muc dich: chuyen tat ca brand tu upstream/Biz100M sang RouterDone,
 xoa domain/secret/combo ca nhan, neutralize default.
 
 ## Bulk Replace (tat ca text files: .js, .json, .mjs, .md, .yml, .sh)
@@ -17,15 +17,15 @@ xoa domain/secret/combo ca nhan, neutralize default.
 | `llmGateway` | `routerdone` | Repo name |
 | `llmgateway` | `routerdone` | Repo name |
 | `thoa100m` | `routerdone` | Owner name |
-| `9Router` | `RouterDone` | Upstream brand -> RouterDone |
-| `9router` | `routerdone` | Upstream brand lowercase |
+| `upstream` | `RouterDone` | Upstream brand -> RouterDone |
+| `upstream-router` | `routerdone` | Upstream brand lowercase |
 | `gpt-5.5.fallback` | `helper.fallback` | Combo ca nhan -> trung tinh |
-| `9ROUTER` | `ROUTERDONE` | Env var names (JCODE_9ROUTER_API_KEY) |
+| `UPSTREAM_ROUTER` | `ROUTERDONE` | Env var names (JCODE_UPSTREAM_ROUTER_API_KEY) |
 | `patches/biz100m-custom.patch` | `patches/routerdone-custom.patch` | Patch filename ref |
 
 ## KHONG rebrand trong patch files
 
-Patch files (`.patch`) giu `9Router`/`9router` trong context lines
+Patch files (`.patch`) giu `upstream`/`upstream-router` trong context lines
 (` ` va `-`) de khop vanilla upstream. Chi rebrand trong added lines
 (`+`). Thuc te: chi replace `Biz100M`, `gpt-5.5.fallback`,
 `llm.biz100m.com`, `thoa100m` trong patch files (cac gia tri nay chi
@@ -35,7 +35,7 @@ xuat hien trong added lines, khong trong upstream context).
 
 - `LICENSE`: giu `Copyright (c) 2024-2026 decolua and contributors`
   (attribution upstream MIT).
-- `decolua/9router` trong Dockerfile/pom reference: la upstream dep,
+- `decolua/upstream-router` trong Dockerfile/pom reference: la upstream dep,
   khong phai brand ca nhan. Co the thay bang URL repo RouterDone moi
   neu muon, nhung khong bat buoc.
 
@@ -45,7 +45,7 @@ xuat hien trong added lines, khong trong upstream context).
 |------|-----|-------------|
 | `.env.example` | `endpoint-proxy-api-key-secret` | `replace-with-openssl-rand-hex-32` |
 | `.env.example` | `endpoint-proxy-salt` | `replace-with-openssl-rand-hex-32` |
-| `.env.example` | `https://9router.com` (CLOUD_URL) | de trong (blank) |
+| `.env.example` | `https://example-upstream.invalid` (CLOUD_URL) | de trong (blank) |
 | `src/shared/utils/apiKey.js` | fallback `endpoint-proxy-api-key-secret` | giu nhu fallback runtime, .env.example yeu cau set |
 | `src/shared/utils/machineId.js` | fallback `endpoint-proxy-salt` | nhu tren |
 | `src/mitm/manager.js` | `routerdone-mitm-pwd` (ENCRYPT_SALT) | hardcoded salt, risk thap, ghi trong residual risk |
@@ -55,6 +55,6 @@ xuat hien trong added lines, khong trong upstream context).
 ```bash
 rg -n -i "biz100m|llmgateway|thoa100m|llm\.biz100m|gpt-5\.5\.fallback" .
 # Expected: chi match trong README (vi du scan regex)
-rg -n -i "9Router|9router" --glob '!*.patch' --glob '!LICENSE' .
+rg -n -i "upstream|upstream-router" --glob '!*.patch' --glob '!LICENSE' .
 # Expected: 0 match (da rebrand het)
 ```

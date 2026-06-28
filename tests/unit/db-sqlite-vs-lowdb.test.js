@@ -1,4 +1,4 @@
-﻿// Compare new SQLite-backed DB layer vs legacy lowdb behavior.
+// Compare new SQLite-backed DB layer vs legacy lowdb behavior.
 // Verifies: same public API signatures + equivalent results for core operations.
 import fs from "node:fs";
 import os from "node:os";
@@ -18,7 +18,13 @@ beforeAll(async () => {
 });
 
 afterAll(() => {
-  if (tempDir) fs.rmSync(tempDir, { recursive: true, force: true });
+  if (tempDir) {
+    try {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    } catch {
+      // Windows can keep sqlite handles briefly after tests finish.
+    }
+  }
   if (originalDataDir === undefined) delete process.env.DATA_DIR;
   else process.env.DATA_DIR = originalDataDir;
 });

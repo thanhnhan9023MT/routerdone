@@ -17,6 +17,15 @@ export function parseSSELine(line, format = null) {
     return null;
   }
 
+  // Raw NDJSON fallback for provider streams that emit JSON lines without SSE framing.
+  const trimmed = line.trim();
+  if (trimmed.startsWith("{")) {
+    try {
+      return JSON.parse(trimmed);
+    } catch {
+      return null;
+    }
+  }
   // Standard SSE format: "data: {...}"
   if (line.charCodeAt(0) !== 100) return null; // 'd' = 100
 

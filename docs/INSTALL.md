@@ -230,7 +230,7 @@ Notes:
 
 ## Versions And Updating
 
-RouterDone tracks upstream 9Router and republishes a clean, rebranded build.
+RouterDone tracks its upstream project and republishes a clean, rebranded build.
 
 - Releases are tagged `vMAJOR.MINOR.PATCH` (for example `v0.5.9`).
 - Each push to `main` gets a GitHub Release with the PATCH bumped by +1.
