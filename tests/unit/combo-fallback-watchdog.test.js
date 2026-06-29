@@ -391,6 +391,21 @@ describe("productive stream watchdog", () => {
     expect(isProductiveStreamChunk({ usage: { prompt_tokens: 1, completion_tokens: 0 } })).toBe(false);
   });
 
+  it("honors route policy for initial stream preflight", async () => {
+    let pullCount = 0;
+    const res = await guardInitialStream(new Response(new ReadableStream({
+      pull(controller) {
+        pullCount += 1;
+        if (pullCount === 1) {
+          controller.enqueue(new TextEncoder().encode("data: {\"id\":\"x\",\"choices\":[{\"delta\":{\"role\":\"assistant\"}}]}\n\n"));
+        }
+      }
+    }), { headers: { "Content-Type": "text/event-stream" } }), {
+      targetFormat: null, log, provider: "p", model: "m",
+      policy: { firstByteTimeoutMs: 5, firstProductiveTimeoutMs: 20, totalBudgetMs: 60 },
+    });
+    expect(res.error).toMatch(/productive timeout \(1s\)/);
+  }, 10000);
   it("direct default timeout is longer than combo default timeout", () => {
     expect(resolveRoutePolicy("direct").stream.firstProductiveTimeoutMs).toBeGreaterThan(resolveRoutePolicy("combo").stream.firstProductiveTimeoutMs);
   });

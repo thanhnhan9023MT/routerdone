@@ -176,6 +176,9 @@ export async function guardInitialStream(providerResponse, { targetFormat, log, 
     const suffix = extra ? ` | ${extra}` : "";
     log?.[level]?.("PREFLIGHT", `${event} | ${formatTiming()}${suffix}`);
   };
+  const firstByteTimeoutMs = policy?.firstByteTimeoutMs || PREFLIGHT_NO_BYTE_CAP_MS;
+  const firstProductiveTimeoutMs = policy?.firstProductiveTimeoutMs || PREFLIGHT_NO_CONTENT_CAP_MS;
+  const totalBudgetMs = policy?.totalBudgetMs || 0;
   const bufferedChunks = [];
   let buffer = "";
   let hasByte = false;
@@ -184,11 +187,14 @@ export async function guardInitialStream(providerResponse, { targetFormat, log, 
   try {
     while (true) {
       const now = Date.now();
-      if (!hasByte && now - lastByteTime > PREFLIGHT_NO_BYTE_CAP_MS) {
-        throw new Error("Upstream first byte timeout (6s)");
+      if (!hasByte && now - lastByteTime > firstByteTimeoutMs) {
+        throw new Error(`Upstream first byte timeout (${Math.ceil(firstByteTimeoutMs / 1000)}s)`);
       }
-      if (hasByte && now - lastByteTime > PREFLIGHT_NO_CONTENT_CAP_MS) {
-        throw new Error("Upstream first productive timeout (9s)");
+      if (hasByte && now - lastByteTime > firstProductiveTimeoutMs) {
+        throw new Error(`Upstream first productive timeout (${Math.ceil(firstProductiveTimeoutMs / 1000)}s)`);
+      }
+      if (totalBudgetMs > 0 && now - startTime > totalBudgetMs) {
+        throw new Error(`Upstream stream total budget exceeded (${Math.ceil(totalBudgetMs / 1000)}s)`);
       }
 
       let timer;
