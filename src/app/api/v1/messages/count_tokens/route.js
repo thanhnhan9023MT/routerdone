@@ -1,3 +1,5 @@
+import { estimateRequestTokens } from "open-sse/utils/tokenEstimate.js";
+
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
@@ -12,7 +14,7 @@ export async function OPTIONS() {
 }
 
 /**
- * POST /v1/messages/count_tokens - Mock token count response
+ * POST /v1/messages/count_tokens - Estimated token count response
  */
 export async function POST(request) {
   let body;
@@ -25,23 +27,7 @@ export async function POST(request) {
     });
   }
 
-  // Estimate token count based on content length
-  const messages = body.messages || [];
-  let totalChars = 0;
-  for (const msg of messages) {
-    if (typeof msg.content === "string") {
-      totalChars += msg.content.length;
-    } else if (Array.isArray(msg.content)) {
-      for (const part of msg.content) {
-        if (part.type === "text" && part.text) {
-          totalChars += part.text.length;
-        }
-      }
-    }
-  }
-
-  // Rough estimate: ~4 chars per token
-  const inputTokens = Math.ceil(totalChars / 4);
+  const inputTokens = estimateRequestTokens(body);
 
   return new Response(JSON.stringify({
     input_tokens: inputTokens

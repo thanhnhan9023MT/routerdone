@@ -23,7 +23,7 @@ import { dedupeTools } from "../utils/toolDeduper.js";
 import { injectCaveman } from "../rtk/caveman.js";
 import { injectPonytail } from "../rtk/ponytail.js";
 import { compressMessages, formatRtkLog } from "../rtk/index.js";
-import { guardContext, formatContextGuardLog, estimateInputTokens } from "../rtk/contextGuard.js";
+import { guardContext, formatContextGuardLog, estimateInputTokens, pruneContextToHardCap, formatHardCapPruneLog } from "../rtk/contextGuard.js";
 import { compressWithHeadroom, formatHeadroomSizeLog, isHeadroomPhantomSavings } from "../rtk/headroom.js";
 import { getCapabilitiesForModel } from "../providers/capabilities.js";
 import { stripUnsupportedModalities } from "../translator/concerns/modality.js";
@@ -214,10 +214,21 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   // Input size verification: estimate input tokens after all token savers.
   // Logs per-request input size for monitoring and enforces a hard cap that
   // signals compact when the conversation exceeds the model context window.
-  const estInputTokens = estimateInputTokens(translatedBody);
+  let estInputTokens = estimateInputTokens(translatedBody);
+  if (estInputTokens > hardCapTokens && !isCompact) {
+    const pruneStats = pruneContextToHardCap(translatedBody, {
+      enabled: contextGuardEnabled !== false,
+      hardCapTokens,
+      keepRecent: effectiveContextGuardKeepRecent,
+      isCompact,
+    });
+    const pruneLine = formatHardCapPruneLog(pruneStats);
+    if (pruneLine) console.log(pruneLine);
+    estInputTokens = estimateInputTokens(translatedBody);
+  }
   console.log(`[CTX-GUARD] input ~${estInputTokens} tokens | cap ${hardCapTokens} (ctx ${modelCtxWindow})${isCompact ? " | compact" : ""}`);
   if (estInputTokens > hardCapTokens && !isCompact) {
-    log?.warn?.("CTX-GUARD", `input ${estInputTokens} tokens exceeds hard cap ${hardCapTokens} — signaling compact`);
+    log?.warn?.("CTX-GUARD", `input ${estInputTokens} tokens exceeds hard cap ${hardCapTokens} after pruning`);
     return createErrorResult(HTTP_STATUS.BAD_REQUEST, `context_too_large: estimated ${estInputTokens} input tokens exceed the ${hardCapTokens} hard cap for ${upstreamModel}. Reduce conversation context (run /compact) before continuing.`);
   }
 

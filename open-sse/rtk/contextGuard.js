@@ -1,3 +1,5 @@
+import { estimateRequestTokens } from "../utils/tokenEstimate.js";
+
 // Context overflow guard: evict old reasoning encrypted_content blobs when the
 // request body exceeds a byte-size threshold. Targets the biggest context
 // accumulator in long agentic CLI sessions (Codex reasoning items).
@@ -11,6 +13,7 @@
 const DEFAULT_MAX_BYTES = 3_500_000; // ~875K tokens (4 chars/token); catches >1M-token drift
 const DEFAULT_KEEP_RECENT = 8;       // keep last N reasoning items intact
 const CHARS_PER_TOKEN = 4;           // rough estimate for logging only
+const TRIM_PLACEHOLDER = "[trimmed by RouterDone context guard]";
 
 // Find the conversation items array across supported request formats.
 function findItems(body) {
@@ -41,6 +44,43 @@ function estimateValueBytes(value, seen = new WeakSet()) {
 
 function estimateBytes(items) {
   return estimateValueBytes(items);
+}
+function itemRole(item) {
+  if (!item || typeof item !== "object") return "";
+  return item.role || (item.type === "message" ? item.role : "");
+}
+
+function canTrimItem(item) {
+  const role = itemRole(item);
+  return role !== "system" && role !== "developer";
+}
+
+function trimStringLeaves(value, budget, seen = new WeakSet()) {
+  if (budget.saved >= budget.need) return value;
+  if (typeof value === "string") {
+    if (value.length <= budget.minStringBytes) return value;
+    const keep = Math.min(budget.keepChars, Math.max(0, value.length - (budget.need - budget.saved)));
+    const next = `${value.slice(0, keep)}\n${TRIM_PLACEHOLDER} (${value.length - keep} chars removed)`;
+    if (next.length >= value.length) return value;
+    budget.saved += value.length - next.length;
+    budget.trimmedStrings++;
+    return next;
+  }
+  if (!value || typeof value !== "object") return value;
+  if (seen.has(value)) return value;
+  seen.add(value);
+  if (Array.isArray(value)) {
+    for (let i = 0; i < value.length && budget.saved < budget.need; i++) {
+      value[i] = trimStringLeaves(value[i], budget, seen);
+    }
+    return value;
+  }
+  for (const key of Object.keys(value)) {
+    if (budget.saved >= budget.need) break;
+    if (key === "id" || key === "role" || key === "type" || key === "name" || key === "call_id" || key === "tool_call_id") continue;
+    value[key] = trimStringLeaves(value[key], budget, seen);
+  }
+  return value;
 }
 
 // Collect reasoning items that carry an encrypted_content blob.
@@ -110,16 +150,55 @@ export function guardContext(body, { enabled = true, maxBytes = DEFAULT_MAX_BYTE
   };
 }
 
-// Estimate input token count from body (rough: total string bytes / 4).
-// Reused by chatCore for per-request input logging and hard-cap enforcement.
+// Estimate input token count from the full request body. Reused by chatCore
+// for per-request input logging and hard-cap enforcement.
 export function estimateInputTokens(body) {
-  if (!body) return 0;
+  if (!body || typeof body !== "object") return 0;
   const items = findItems(body);
   if (!items || items.length === 0) return 0;
-  return Math.round(estimateBytes(items) / CHARS_PER_TOKEN);
+  return estimateRequestTokens(body);
 }
 
 // Format a log line from guard stats.
+
+export function pruneContextToHardCap(body, { enabled = true, hardCapTokens = 0, keepRecent = DEFAULT_KEEP_RECENT, isCompact = false } = {}) {
+  if (!enabled || !body || isCompact || hardCapTokens <= 0) return null;
+  const items = findItems(body);
+  if (!items || items.length === 0) return null;
+
+  const beforeTokens = estimateInputTokens(body);
+  if (beforeTokens <= hardCapTokens) return null;
+
+  const targetTokens = Math.max(1, Math.floor(hardCapTokens * 0.95));
+  const budget = {
+    need: Math.max(0, (beforeTokens - targetTokens) * CHARS_PER_TOKEN),
+    saved: 0,
+    trimmedStrings: 0,
+    minStringBytes: 1024,
+    keepChars: 256,
+  };
+  const lastTrimIndex = Math.max(0, items.length - Math.max(1, keepRecent));
+  for (let i = 0; i < lastTrimIndex && budget.saved < budget.need; i++) {
+    if (!canTrimItem(items[i])) continue;
+    trimStringLeaves(items[i], budget);
+  }
+
+  if (budget.trimmedStrings === 0) return null;
+  return {
+    trimmedStrings: budget.trimmedStrings,
+    savedBytes: budget.saved,
+    estTokensBefore: beforeTokens,
+    estTokensAfter: estimateInputTokens(body),
+    hardCapTokens,
+    targetTokens,
+  };
+}
+
+export function formatHardCapPruneLog(stats) {
+  if (!stats || stats.trimmedStrings === 0) return null;
+  const savedKB = Math.round(stats.savedBytes / 1024);
+  return `[CTX-GUARD] pruned ${stats.trimmedStrings} old string fields (${savedKB}KB) | est ${stats.estTokensBefore} -> ${stats.estTokensAfter} tokens | cap ${stats.hardCapTokens}`;
+}
 export function formatContextGuardLog(stats) {
   if (!stats || stats.evictedItems === 0) return null;
   const savedKB = Math.round(stats.evictedBytes / 1024);

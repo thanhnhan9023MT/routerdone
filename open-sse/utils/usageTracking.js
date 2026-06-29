@@ -4,6 +4,7 @@
 
 import { saveRequestUsage, appendRequestLog } from "@/lib/usageDb.js";
 import { FORMATS } from "../translator/formats.js";
+import { estimateRequestTokens } from "./tokenEstimate.js";
 
 // ANSI color codes
 export const COLORS = {
@@ -239,18 +240,7 @@ export function extractUsage(chunk) {
  */
 export function estimateInputTokens(body) {
   if (!body || typeof body !== "object") return 0;
-
-  try {
-    // Calculate total body size (includes messages, tools, system, thinking config, etc.)
-    const bodyStr = JSON.stringify(body);
-    const totalChars = bodyStr.length;
-
-    // Estimate: ~4 chars per token (rough average across all tokenizers)
-    return Math.ceil(totalChars / 4);
-  } catch (err) {
-    // Fallback if stringify fails
-    return 0;
-  }
+  return estimateRequestTokens(body);
 }
 
 /**
