@@ -310,7 +310,7 @@ function buildTransformStream({ provider, sourceFormat, targetFormat, userAgent,
   if (needsTranslation(targetFormat, sourceFormat)) {
     return createSSETransformStreamWithLogger(targetFormat, sourceFormat, provider, reqLogger, toolNameMap, model, connectionId, body, onStreamComplete, apiKey);
   }
-  return createPassthroughStreamWithLogger(provider, reqLogger, model, connectionId, body, onStreamComplete, apiKey);
+  return createPassthroughStreamWithLogger(provider, reqLogger, model, connectionId, body, onStreamComplete, apiKey, sourceFormat);
 }
 
 export async function handleStreamingResponse({ providerResponse, provider, model, sourceFormat, targetFormat, userAgent, body, stream, translatedBody, finalBody, requestStartTime, connectionId, apiKey, clientRawRequest, onRequestSuccess, reqLogger, toolNameMap, streamController, onStreamComplete, log, streamTimeoutPolicy, routeInfo, retryFn, emptyStreamRetryDelayMs = PREFLIGHT_TICK_MS }) {

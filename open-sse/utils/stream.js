@@ -100,6 +100,17 @@ export function createSSEStream(options = {}) {
   let sseEmittedCount = 0;
   const eventTypeCounts = {};
 
+  // Claude passthrough stream repair: track whether terminal events were received
+  const isClaudePassthrough = mode === STREAM_MODE.PASSTHROUGH && sourceFormat === FORMATS.CLAUDE;
+  let claudeLastBlockIndex = -1;
+  let claudeLastBlockStopped = true;
+  let claudeMessageDeltaSeen = false;
+  let claudeMessageStopSeen = false;
+  let claudeStopReason = null;
+  let claudeMessageId = null;
+  let claudeModel = null;
+  let claudeUsage = null;
+
   // Track Responses API event framing for same-format passthrough (codex)
   let currentOpenAIResponsesEvent = null;
   let openAIResponsesTerminalSeen = false;
@@ -166,8 +177,45 @@ export function createSSEStream(options = {}) {
                 }
               }
 
-              if (!hasValuableContent(parsed, FORMATS.OPENAI)) {
+              if (!hasValuableContent(parsed, isClaudePassthrough ? FORMATS.CLAUDE : FORMATS.OPENAI)) {
                 continue;
+              }
+
+              // Claude passthrough: track terminal event state
+              if (isClaudePassthrough) {
+                const evtType = parsed.type;
+                if (evtType === "message_start") {
+                  claudeMessageId = parsed.message?.id || null;
+                  claudeModel = parsed.message?.model || null;
+                } else if (evtType === "content_block_start") {
+                  claudeLastBlockIndex = parsed.index ?? claudeLastBlockIndex + 1;
+                  claudeLastBlockStopped = false;
+                  if (parsed.content_block?.type === "tool_use") {
+                    claudeStopReason = "tool_use";
+                  }
+                } else if (evtType === "content_block_stop") {
+                  claudeLastBlockStopped = true;
+                } else if (evtType === "message_delta") {
+                  claudeMessageDeltaSeen = true;
+                  if (parsed.delta?.stop_reason) claudeStopReason = parsed.delta.stop_reason;
+                  if (parsed.usage) claudeUsage = parsed.usage;
+                } else if (evtType === "message_stop") {
+                  claudeMessageStopSeen = true;
+                }
+
+                // Accumulate Claude content for usage estimation fallback
+                const claudeDelta = parsed.delta;
+                if (claudeDelta?.text && typeof claudeDelta.text === "string") {
+                  totalContentLength += claudeDelta.text.length;
+                  accumulatedContent += claudeDelta.text;
+                }
+                if (claudeDelta?.thinking && typeof claudeDelta.thinking === "string") {
+                  totalContentLength += claudeDelta.thinking.length;
+                  accumulatedThinking += claudeDelta.thinking;
+                }
+                if (claudeDelta?.partial_json && typeof claudeDelta.partial_json === "string") {
+                  totalContentLength += claudeDelta.partial_json.length;
+                }
               }
 
               const delta = parsed.choices?.[0]?.delta;
@@ -394,8 +442,17 @@ export function createSSEStream(options = {}) {
             controller.enqueue(sharedEncoder.encode(output));
           }
 
-          if (!hasValidUsage(usage) && totalContentLength > 0) {
-            usage = estimateUsage(body, totalContentLength, FORMATS.OPENAI);
+          // Claude passthrough: capture usage from message_delta if present, else estimate
+          if (isClaudePassthrough) {
+            const claudeExtracted = extractUsage(claudeUsage ? { type: "message_delta", usage: claudeUsage } : null);
+            if (claudeExtracted) usage = claudeExtracted;
+            if (!hasValidUsage(usage) && totalContentLength > 0) {
+              usage = estimateUsage(body, totalContentLength, sourceFormat);
+            }
+          } else {
+            if (!hasValidUsage(usage) && totalContentLength > 0) {
+              usage = estimateUsage(body, totalContentLength, FORMATS.OPENAI);
+            }
           }
 
           if (hasValidUsage(usage)) {
@@ -403,7 +460,34 @@ export function createSSEStream(options = {}) {
           } else {
             appendRequestLog({ model, provider, connectionId, tokens: null, status: "200 OK" }).catch(() => { });
           }
-          
+
+          // Claude passthrough stream repair: inject missing terminal events
+          if (isClaudePassthrough && (claudeLastBlockIndex >= 0 || claudeMessageId)) {
+            // Build a usage object for the message_delta, preferring real upstream usage
+            let repairUsage = claudeUsage;
+            if (!hasValidUsage(repairUsage)) {
+              const estimated = estimateUsage(body, totalContentLength, sourceFormat);
+              repairUsage = filterUsageForFormat(estimated, sourceFormat);
+            }
+            if (!claudeLastBlockStopped && claudeLastBlockIndex >= 0) {
+              const repair = `event: content_block_stop\ndata: ${JSON.stringify({ type: "content_block_stop", index: claudeLastBlockIndex })}\n\n`;
+              reqLogger?.appendConvertedChunk?.(repair);
+              controller.enqueue(sharedEncoder.encode(repair));
+            }
+            if (!claudeMessageDeltaSeen) {
+              const stopReason = claudeStopReason || "end_turn";
+              const deltaPayload = { type: "message_delta", delta: { stop_reason: stopReason, stop_sequence: null }, usage: repairUsage || { output_tokens: 0 } };
+              const repair = `event: message_delta\ndata: ${JSON.stringify(deltaPayload)}\n\n`;
+              reqLogger?.appendConvertedChunk?.(repair);
+              controller.enqueue(sharedEncoder.encode(repair));
+            }
+            if (!claudeMessageStopSeen) {
+              const repair = `event: message_stop\ndata: ${JSON.stringify({ type: "message_stop" })}\n\n`;
+              reqLogger?.appendConvertedChunk?.(repair);
+              controller.enqueue(sharedEncoder.encode(repair));
+            }
+          }
+
           // IMPORTANT: In passthrough mode we still must terminate the SSE stream.
           // Some clients (e.g. OpenClaw) expect the OpenAI-style sentinel:
           //   data: [DONE]\n\n
@@ -516,9 +600,10 @@ export function createSSETransformStreamWithLogger(targetFormat, sourceFormat, p
   });
 }
 
-export function createPassthroughStreamWithLogger(provider = null, reqLogger = null, model = null, connectionId = null, body = null, onStreamComplete = null, apiKey = null) {
+export function createPassthroughStreamWithLogger(provider = null, reqLogger = null, model = null, connectionId = null, body = null, onStreamComplete = null, apiKey = null, sourceFormat = null) {
   return createSSEStream({
     mode: STREAM_MODE.PASSTHROUGH,
+    sourceFormat,
     provider,
     reqLogger,
     model,
