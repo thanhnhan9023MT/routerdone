@@ -77,7 +77,7 @@ function trimStringLeaves(value, budget, seen = new WeakSet()) {
   }
   for (const key of Object.keys(value)) {
     if (budget.saved >= budget.need) break;
-    if (key === "id" || key === "role" || key === "type" || key === "name" || key === "call_id" || key === "tool_call_id") continue;
+    if (key === "id" || key === "role" || key === "type" || key === "name" || key === "call_id" || key === "tool_call_id" || key === "image_url" || key === "url") continue;
     value[key] = trimStringLeaves(value[key], budget, seen);
   }
   return value;
