@@ -54,7 +54,10 @@ export const MODEL_FAILURE_IDLE_RESET_MS = 60 * 60 * 1000;
 
 
 // Short account/provider cooldown for busy or concurrency gates.
-export const BUSY_CONNECTION_COOLDOWN_MS = 30 * 1000;
+// 2s (2026-07-02): concurrency 429s (e.g. neuralwatt "10/10 slots in use",
+// retry_after ~1s) are transient — the slot frees in ~1s. A short flat cooldown
+// lets the account rotate back in quickly so the whole key pool stays usable.
+export const BUSY_CONNECTION_COOLDOWN_MS = 2 * 1000;
 
 // Short self-heal window for request-scoped/provider-surface errors. These
 // should clear from Provider UI quickly and be retried on the next call.
@@ -105,6 +108,9 @@ export const ERROR_RULES = [
   { text: "maximum concurrent requests", cooldownMs: BUSY_CONNECTION_COOLDOWN_MS },
   { text: "too many in-flight",       cooldownMs: BUSY_CONNECTION_COOLDOWN_MS },
   { text: "in-flight requests",       cooldownMs: BUSY_CONNECTION_COOLDOWN_MS },
+  { text: "concurrent limit reached", cooldownMs: BUSY_CONNECTION_COOLDOWN_MS },
+  { text: "slots in use",             cooldownMs: BUSY_CONNECTION_COOLDOWN_MS },
+  { text: "concurrent_budget",        cooldownMs: BUSY_CONNECTION_COOLDOWN_MS },
   { text: "rate limit",               backoff: true },
   { text: "too many requests",        backoff: true },
   { text: "quota exceeded",           backoff: true },

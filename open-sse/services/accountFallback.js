@@ -9,6 +9,9 @@ const BUSY_CONCURRENCY_TEXT = [
   "maximum concurrent requests",
   "too many in-flight",
   "in-flight requests",
+  "concurrent limit reached",
+  "slots in use",
+  "concurrent_budget",
 ];
 
 const PREFLIGHT_TIMEOUT_TEXT = [
