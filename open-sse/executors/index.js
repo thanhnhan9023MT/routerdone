@@ -6,6 +6,7 @@ import { IFlowExecutor } from "./iflow.js";
 import { QoderExecutor } from "./qoder.js";
 import { KiroExecutor } from "./kiro.js";
 import { CodexExecutor } from "./codex.js";
+import { CodexSaleCodexExecutor } from "./codex-sale-codex.js";
 import { CursorExecutor } from "./cursor.js";
 import { VertexExecutor } from "./vertex.js";
 import { QwenExecutor } from "./qwen.js";
@@ -29,6 +30,7 @@ const executors = {
   qoder: new QoderExecutor(),
   kiro: new KiroExecutor(),
   codex: new CodexExecutor(),
+  "codex-sale-codex": new CodexSaleCodexExecutor(),
   cursor: new CursorExecutor(),
   cu: new CursorExecutor(), // Alias for cursor
   vertex: new VertexExecutor("vertex"),
@@ -67,6 +69,7 @@ export { IFlowExecutor } from "./iflow.js";
 export { QoderExecutor } from "./qoder.js";
 export { KiroExecutor } from "./kiro.js";
 export { CodexExecutor } from "./codex.js";
+export { CodexSaleCodexExecutor } from "./codex-sale-codex.js";
 export { CursorExecutor } from "./cursor.js";
 export { VertexExecutor } from "./vertex.js";
 export { DefaultExecutor } from "./default.js";
