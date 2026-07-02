@@ -95,6 +95,7 @@ import p92 from "./xiaomi-tokenplan.js";
 import p93 from "./youcom.js";
 import p94 from "./codex-sale-codex.js";
 import p95 from "./neuralwatt.js";
+import p96 from "./ashibalt.js";
 
 export default [
   p0,
@@ -192,5 +193,6 @@ export default [
   p92,
   p93,
   p94,
-  p95
+  p95,
+  p96
 ];
