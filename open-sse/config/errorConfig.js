@@ -43,7 +43,9 @@ export const TRANSIENT_COOLDOWN_MS = 30 * 1000;
 // window, capped at MODEL_FAILURE_BACKOFF_MAX_MS. A successful call to that model
 // resets the counter so the next failure starts back at the base.
 export const MODEL_FAILURE_BACKOFF_BASE_MS = 30 * 1000;
-export const MODEL_FAILURE_BACKOFF_MAX_MS = 30 * 60 * 1000;
+// Capped at 60s (2026-07-02): with the codex.sale multi-key rotation pool a
+// failing key/model should recover within ~1 min, not stay blocked up to 30min.
+export const MODEL_FAILURE_BACKOFF_MAX_MS = 60 * 1000;
 // Idle window after which the per-model failure counter resets to a fresh
 // start. Must exceed MODEL_FAILURE_BACKOFF_MAX_MS so a capped block is never
 // shorter than the reset window (otherwise chronic-dead models oscillate
