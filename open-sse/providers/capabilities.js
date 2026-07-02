@@ -87,6 +87,9 @@ export const MODEL_CAPABILITIES = {
   // Qwen plain coder/text (no vision) — registry "vision-model" / "coder-model" aliases
   "vision-model":      { vision: true, reasoning: true, thinkingFormat: "qwen", contextWindow: 1000000 },
   "coder-model":       { reasoning: true, thinkingFormat: "qwen", contextWindow: 1000000 },
+
+  // MiniMax M3 (api.minimax.io) — multimodal vision reasoning model; vision leg of the glm-5.2 combo
+  "MiniMax-M3":        { vision: true, reasoning: true, thinkingFormat: "minimax", contextWindow: 1000000, maxOutput: 128000 },
 };
 
 /**
