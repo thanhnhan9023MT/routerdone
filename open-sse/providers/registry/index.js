@@ -96,6 +96,10 @@ import p93 from "./youcom.js";
 import p94 from "./codex-sale-codex.js";
 import p95 from "./neuralwatt.js";
 import p96 from "./ashibalt.js";
+import p97 from "./sh00t.js";
+import p98 from "./sypham.js";
+import p99 from "./kimchi.js";
+import p100 from "./xpiki.js";
 
 export default [
   p0,
@@ -194,5 +198,9 @@ export default [
   p93,
   p94,
   p95,
-  p96
+  p96,
+  p97,
+  p98,
+  p99,
+  p100
 ];
