@@ -32,8 +32,8 @@ describe("passwordAuth — legacy mode (PASSWORD_FROM_ENV unset)", () => {
   });
 
   it("uses INITIAL_PASSWORD when set but no hash stored yet", async () => {
-    setEnv({ INITIAL_PASSWORD: "2030@Tltp" });
-    expect(await verifyPassword("2030@Tltp")).toBe(true);
+    setEnv({ INITIAL_PASSWORD: "passcuaban" });
+    expect(await verifyPassword("passcuaban")).toBe(true);
     expect(await verifyPassword("123456")).toBe(false);
   });
 
@@ -41,9 +41,9 @@ describe("passwordAuth — legacy mode (PASSWORD_FROM_ENV unset)", () => {
     // bcrypt hash for "oldpass" — precomputed so the test stays sync-free.
     const hash = await (await import("bcryptjs")).hash("oldpass", 10);
     settingsState.password = hash;
-    setEnv({ INITIAL_PASSWORD: "2030@Tltp" });
+    setEnv({ INITIAL_PASSWORD: "passcuaban" });
     expect(await verifyPassword("oldpass")).toBe(true);
-    expect(await verifyPassword("2030@Tltp")).toBe(false); // env ignored when hash present
+    expect(await verifyPassword("passcuaban")).toBe(false); // env ignored when hash present
   });
 
   it("isUsingDefaultPassword true only when no hash AND no env", async () => {
@@ -60,8 +60,8 @@ describe("passwordAuth — env precedence mode (PASSWORD_FROM_ENV=true)", () => 
 
   it("env password wins even when DB has a hash", async () => {
     settingsState.password = "$2a$10$somehashthatwontmatchanything";
-    setEnv({ PASSWORD_FROM_ENV: "true", INITIAL_PASSWORD: "2030@Tltp" });
-    expect(await verifyPassword("2030@Tltp")).toBe(true);
+    setEnv({ PASSWORD_FROM_ENV: "true", INITIAL_PASSWORD: "passcuaban" });
+    expect(await verifyPassword("passcuaban")).toBe(true);
     // The stale DB hash is ignored — this is the Dokploy fix.
     expect(await verifyPassword("anything-else")).toBe(false);
   });
