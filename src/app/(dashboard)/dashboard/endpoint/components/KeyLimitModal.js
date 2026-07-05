@@ -21,6 +21,10 @@ export default function KeyLimitModal({ isOpen, onClose, keyRecord, onSaved }) {
   const [allowedValue, setAllowedValue] = useState(keyRecord?.allowedModels?.value || "");
   const [models, setModels] = useState([]);
   const [combos, setCombos] = useState([]);
+  // When true, the "specific model" picker shows a free-text input instead of the
+  // <select>. Used for model names not exposed by /v1/models (CLI tool wire names,
+  // custom/aliased models, or when no provider is connected and /v1/models is empty).
+  const [customModelMode, setCustomModelMode] = useState(false);
   const [saving, setSaving] = useState(false);
   const [resetting, setResetting] = useState(false);
   const [error, setError] = useState("");
@@ -40,6 +44,17 @@ export default function KeyLimitModal({ isOpen, onClose, keyRecord, onSaved }) {
         setModels(modelIds);
         const comboNames = (combosRes?.combos || []).map((c) => c.name).filter(Boolean).sort();
         setCombos(comboNames);
+        // Auto-fall-back to custom-mode when the saved value is non-empty but
+        // missing from /v1/models (disconnected provider, custom/aliased model,
+        // CLI wire name). Prevents the <select> from silently dropping the value.
+        if (
+          allowedType === "model" &&
+          allowedValue &&
+          modelIds.length > 0 &&
+          !modelIds.includes(allowedValue)
+        ) {
+          setCustomModelMode(true);
+        }
       } catch {
         // Options are best-effort; user can still type the value manually.
       }
@@ -194,7 +209,7 @@ export default function KeyLimitModal({ isOpen, onClose, keyRecord, onSaved }) {
                   type="radio"
                   name="allowedType"
                   checked={allowedType === opt.v}
-                  onChange={() => { setAllowedType(opt.v); setAllowedValue(""); }}
+                  onChange={() => { setAllowedType(opt.v); setAllowedValue(""); setCustomModelMode(false); }}
                   className="accent-[var(--color-primary,#4f7cff)]"
                 />
                 <span>{opt.label}</span>
@@ -203,17 +218,49 @@ export default function KeyLimitModal({ isOpen, onClose, keyRecord, onSaved }) {
           </div>
           {allowedType === "model" && (
             <div className="flex flex-col gap-1">
-              <label className="text-xs text-text-muted">Model name</label>
-              <select
-                value={allowedValue}
-                onChange={(e) => setAllowedValue(e.target.value)}
-                className="px-3 py-2 rounded-lg bg-surface-2 border border-border text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
-              >
-                <option value="">— pick a model —</option>
-                {models.map((m) => (<option key={m} value={m}>{m}</option>))}
-              </select>
-              {models.length === 0 && (
-                <p className="text-xs text-text-muted">No models available. Check your provider connections.</p>
+              <div className="flex items-center justify-between">
+                <label className="text-xs text-text-muted">Model name</label>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCustomModelMode((v) => !v);
+                    setAllowedValue("");
+                  }}
+                  className="text-xs text-primary underline hover:opacity-80"
+                >
+                  {customModelMode ? "Pick from list" : "Enter custom name…"}
+                </button>
+              </div>
+              {customModelMode ? (
+                <Input
+                  type="text"
+                  value={allowedValue}
+                  onChange={(e) => setAllowedValue(e.target.value)}
+                  placeholder="e.g. gpt-5, claude-sonnet-4-5"
+                />
+              ) : (
+                <>
+                  <select
+                    value={allowedValue}
+                    onChange={(e) => setAllowedValue(e.target.value)}
+                    className="px-3 py-2 rounded-lg bg-surface-2 border border-border text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                  >
+                    <option value="">— pick a model —</option>
+                    {models.map((m) => (<option key={m} value={m}>{m}</option>))}
+                  </select>
+                  {models.length === 0 && (
+                    <p className="text-xs text-text-muted">
+                      No models available from your provider connections.{" "}
+                      <button
+                        type="button"
+                        onClick={() => setCustomModelMode(true)}
+                        className="text-primary underline hover:opacity-80"
+                      >
+                        Enter a custom model name instead
+                      </button>.
+                    </p>
+                  )}
+                </>
               )}
             </div>
           )}
