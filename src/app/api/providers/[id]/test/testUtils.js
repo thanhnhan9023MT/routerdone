@@ -452,6 +452,18 @@ async function testApiKeyConnection(connection, effectiveProxy = null) {
         const valid = res.status !== 401 && res.status !== 403;
         return { valid, error: valid ? null : "Invalid API key" };
       }
+      case "glm-coding-plan": {
+        // Local/internal zcodedone sidecar. URL overridable via ZCODE_SIDECAR_URL.
+        // See docs/ZCODE_PLAN.md. connection.apiKey holds the ZCODE_GATEWAY_KEY.
+        const sidecarUrl = process.env.ZCODE_SIDECAR_URL || "http://127.0.0.1:3000/v1/messages";
+        const res = await fetchWithConnectionProxy(sidecarUrl, {
+          method: "POST",
+          headers: { "Authorization": `Bearer ${connection.apiKey}`, "anthropic-version": "2023-06-01", "content-type": "application/json" },
+          body: JSON.stringify({ model: "glm-4.7", max_tokens: 1, messages: [{ role: "user", content: "test" }] }),
+        }, effectiveProxy);
+        const valid = res.status !== 401 && res.status !== 403;
+        return { valid, error: valid ? null : "Invalid gateway key or sidecar not reachable" };
+      }
       case "minimax":
       case "minimax-cn": {
         const endpoints = { minimax: "https://api.minimax.io/anthropic/v1/messages", "minimax-cn": "https://api.minimaxi.com/anthropic/v1/messages" };

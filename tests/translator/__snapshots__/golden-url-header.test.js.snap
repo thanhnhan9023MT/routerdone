@@ -482,6 +482,31 @@ exports[`GOLDEN buildHeaders (default executor providers) > glm-cn → headers (
 }
 `;
 
+exports[`GOLDEN buildHeaders (default executor providers) > glm-coding-plan → headers (apiKey / oauth) 1`] = `
+{
+  "apiKey": {
+    "Accept": "text/event-stream",
+    "Anthropic-Beta": "claude-code-20250219,interleaved-thinking-2025-05-14",
+    "Anthropic-Version": "2023-06-01",
+    "Authorization": "Bearer <TOK>",
+    "Content-Type": "application/json",
+  },
+  "nonStream": {
+    "Anthropic-Beta": "claude-code-20250219,interleaved-thinking-2025-05-14",
+    "Anthropic-Version": "2023-06-01",
+    "Authorization": "Bearer <TOK>",
+    "Content-Type": "application/json",
+  },
+  "oauth": {
+    "Accept": "text/event-stream",
+    "Anthropic-Beta": "claude-code-20250219,interleaved-thinking-2025-05-14",
+    "Anthropic-Version": "2023-06-01",
+    "Authorization": "Bearer <TOK>",
+    "Content-Type": "application/json",
+  },
+}
+`;
+
 exports[`GOLDEN buildHeaders (default executor providers) > groq → headers (apiKey / oauth) 1`] = `
 {
   "apiKey": {
@@ -1079,6 +1104,13 @@ exports[`GOLDEN buildUrl (default executor providers) > glm-cn → url (stream +
 {
   "nonStream": "https://open.bigmodel.cn/api/coding/paas/v4/chat/completions",
   "stream": "https://open.bigmodel.cn/api/coding/paas/v4/chat/completions",
+}
+`;
+
+exports[`GOLDEN buildUrl (default executor providers) > glm-coding-plan → url (stream + non-stream) 1`] = `
+{
+  "nonStream": "http://127.0.0.1:3000/v1/messages",
+  "stream": "http://127.0.0.1:3000/v1/messages",
 }
 `;
 
