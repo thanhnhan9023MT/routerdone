@@ -216,13 +216,14 @@ export function openaiToOpenAIResponsesRequest(model, body, stream, credentials)
   const messages = body.messages || [];
 
   for (const msg of messages) {
-    if (msg.role === ROLE.SYSTEM) {
-      // Use first system message as instructions
+    if (msg.role === ROLE.SYSTEM || msg.role === ROLE.DEVELOPER) {
+      // Use the first instruction-bearing message as instructions.
+      // OpenAI recommends role="developer" for GPT-5/Codex as the system-level prompt.
       if (!hasSystemMessage) {
         result.instructions = typeof msg.content === "string" ? msg.content : "";
         hasSystemMessage = true;
       }
-      continue; // Skip system messages in input
+      continue; // Skip instruction messages in input
     }
 
     // Convert user/assistant messages to input items
@@ -311,6 +312,8 @@ export function openaiToOpenAIResponsesRequest(model, body, stream, credentials)
   if (body.temperature !== undefined) result.temperature = body.temperature;
   if (body.max_tokens !== undefined) result.max_tokens = body.max_tokens;
   if (body.top_p !== undefined) result.top_p = body.top_p;
+  if (body.reasoning !== undefined) result.reasoning = body.reasoning;
+  if (body.reasoning_effort !== undefined) result.reasoning = { effort: body.reasoning_effort, summary: "auto" };
 
   return result;
 }

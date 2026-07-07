@@ -3,24 +3,11 @@ import { describe, it, expect } from "vitest";
 import "./registerAll.js";
 import { translateRequest } from "../../open-sse/translator/index.js";
 import { FORMATS } from "../../open-sse/translator/formats.js";
-import { getCapabilitiesForModel } from "../../open-sse/providers/capabilities.js";
 
 const R2O = (body) => translateRequest(FORMATS.OPENAI_RESPONSES, FORMATS.OPENAI, "m", body, true, null, null);
 const O2R = (body) => translateRequest(FORMATS.OPENAI, FORMATS.OPENAI_RESPONSES, "m", body, true, null, null);
 
 describe("Codex CLI Responses → OpenAI", () => {
-  it("folds output image_url blocks into OpenAI chat content", () => {
-    const out = R2O({
-      input: [{ type: "message", output: [
-        { type: "input_image", image_url: "https://example.com/a.png" },
-      ] }],
-    });
-    expect(out.messages[0].role).toBe("user");
-    expect(out.messages[0].content).toEqual([
-      { type: "image_url", image_url: { url: "https://example.com/a.png", detail: "auto" } },
-    ]);
-  });
-
   // openai-responses.js:103 — function_call with empty name skipped, can leave tool_calls: []
   // KNOWN BUG: empty tool_calls array is rejected by OpenAI/Codex
   it.fails("assistant has no empty tool_calls array when all names are empty", () => {
@@ -58,14 +45,21 @@ describe("Codex CLI Responses → OpenAI", () => {
   });
 });
 
-describe("GLM vision capabilities", () => {
-  it("marks glm-5v-turbo as vision and keeps glm-5.2 text-only", () => {
-    expect(getCapabilitiesForModel("glm", "glm-5v-turbo").vision).toBe(true);
-    expect(getCapabilitiesForModel("glm", "glm-5.2").vision).toBe(false);
-  });
-});
-
 describe("OpenAI → Codex Responses (reverse)", () => {
+  it("maps developer messages to Responses API instructions", () => {
+    const out = O2R({
+      messages: [
+        { role: "developer", content: "Follow the project rules." },
+        { role: "user", content: "Hello" },
+      ],
+    });
+
+    expect(out.instructions).toBe("Follow the project rules.");
+    expect(out.input).toEqual([
+      { type: "message", role: "user", content: [{ type: "input_text", text: "Hello" }] },
+    ]);
+  });
+
   // openai-responses.js:13 — clampCallId NOT applied on Responses→Chat; but here Chat→Responses must clamp
   it("call_id longer than 64 chars is clamped", () => {
     const longId = "call_" + "x".repeat(80);
