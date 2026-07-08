@@ -95,6 +95,7 @@ export const ERROR_RULES = [
   { text: "maximum context length",   cooldownMs: PROVIDER_SELF_HEAL_COOLDOWN_MS, selfHeal: true },
   { text: "reduce conversation context", cooldownMs: PROVIDER_SELF_HEAL_COOLDOWN_MS, selfHeal: true },
   { text: "tools and response_format cannot be combined", cooldownMs: PROVIDER_SELF_HEAL_COOLDOWN_MS, selfHeal: true },
+  { text: "<!doctype html>",          cooldownMs: PROVIDER_SELF_HEAL_COOLDOWN_MS, selfHeal: true },
 
   // --- Text-based rules (checked first, order = priority) ---
   { text: "no credentials",           cooldownMs: COOLDOWN.long },
@@ -122,6 +123,7 @@ export const ERROR_RULES = [
   { status: 402, cooldownMs: COOLDOWN.long },
   { status: 403, cooldownMs: COOLDOWN.long },
   { status: 404, cooldownMs: COOLDOWN.long },
+  { status: 530, cooldownMs: PROVIDER_SELF_HEAL_COOLDOWN_MS, selfHeal: true },
   { status: 429, backoff: true },
 ];
 

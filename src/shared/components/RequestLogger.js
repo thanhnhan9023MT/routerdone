@@ -25,7 +25,8 @@ export default function RequestLogger() {
   const fetchLogs = async (showLoading = true) => {
     if (showLoading) setLoading(true);
     try {
-      const res = await fetch("/api/usage/request-logs");
+      const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || "";
+      const res = await fetch(`/api/usage/request-logs?tz=${encodeURIComponent(tz)}`);
       if (res.ok) {
         const data = await res.json();
         setLogs(data);

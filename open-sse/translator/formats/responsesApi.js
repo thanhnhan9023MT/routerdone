@@ -23,6 +23,16 @@ export function normalizeResponsesInput(input) {
   return null;
 }
 
+export function toOpenAIContentBlock(block) {
+  if (block?.type === RESPONSES_ITEM.INPUT_TEXT) return { type: OPENAI_BLOCK.TEXT, text: block.text };
+  if (block?.type === RESPONSES_ITEM.OUTPUT_TEXT) return { type: OPENAI_BLOCK.TEXT, text: block.text };
+  if (block?.type === RESPONSES_ITEM.INPUT_IMAGE || Object.hasOwn(block || {}, "image_url")) {
+    const url = block.image_url || block.file_id || "";
+    return { type: OPENAI_BLOCK.IMAGE_URL, image_url: { url, detail: block.detail || "auto" } };
+  }
+  return block;
+}
+
 /**
  * Convert OpenAI Responses API format to standard chat completions format
  * Responses API uses: { input: [...], instructions: "..." }
@@ -66,19 +76,14 @@ export function convertResponsesApiFormat(body) {
         pendingToolResults = [];
       }
 
-      // Convert content: input_text → text, output_text → text, input_image → image_url
-      const content = Array.isArray(item.content)
-        ? item.content.map(c => {
-          if (c.type === RESPONSES_ITEM.INPUT_TEXT) return { type: OPENAI_BLOCK.TEXT, text: c.text };
-          if (c.type === RESPONSES_ITEM.OUTPUT_TEXT) return { type: OPENAI_BLOCK.TEXT, text: c.text };
-          if (c.type === RESPONSES_ITEM.INPUT_IMAGE) {
-            const url = c.image_url || c.file_id || "";
-            return { type: OPENAI_BLOCK.IMAGE_URL, image_url: { url, detail: c.detail || "auto" } };
-          }
-          return c;
-        })
+      // Convert content/output: input_text/output_text -> text, image blocks -> image_url.
+      const blocks = [];
+      if (Array.isArray(item.content)) blocks.push(...item.content);
+      if (Array.isArray(item.output)) blocks.push(...item.output);
+      const content = blocks.length > 0
+        ? blocks.map(toOpenAIContentBlock)
         : item.content;
-      result.messages.push({ role: item.role, content });
+      result.messages.push({ role: item.role || ROLE.USER, content });
     }
     else if (itemType === RESPONSES_ITEM.FUNCTION_CALL) {
       // Start or append to assistant message with tool_calls

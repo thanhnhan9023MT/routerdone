@@ -4,7 +4,7 @@
 
 import { saveRequestUsage, appendRequestLog } from "@/lib/usageDb.js";
 import { FORMATS } from "../translator/formats.js";
-import { estimateRequestTokens } from "./tokenEstimate.js";
+import { countRequestTokens, countTextTokens } from "./tokenEstimate.js";
 
 // ANSI color codes
 export const COLORS = {
@@ -240,15 +240,7 @@ export function extractUsage(chunk) {
  */
 export function estimateInputTokens(body) {
   if (!body || typeof body !== "object") return 0;
-  return estimateRequestTokens(body);
-}
-
-/**
- * Estimate output tokens from content length
- */
-export function estimateOutputTokens(contentLength) {
-  if (!contentLength || contentLength <= 0) return 0;
-  return Math.max(1, Math.floor(contentLength / 4));
+  return countRequestTokens(body, body?.model).count;
 }
 
 /**
@@ -256,14 +248,15 @@ export function estimateOutputTokens(contentLength) {
  * @param {number} inputTokens - Input/prompt tokens
  * @param {number} outputTokens - Output/completion tokens
  * @param {string} targetFormat - Target format from FORMATS
+ * @param {boolean} estimated - True when tokenizer fallback estimation was used
  */
-export function formatUsage(inputTokens, outputTokens, targetFormat) {
+export function formatUsage(inputTokens, outputTokens, targetFormat, estimated = false) {
   // Claude format uses input_tokens/output_tokens
   if (targetFormat === FORMATS.CLAUDE) {
     return addBufferToUsage({ 
       input_tokens: inputTokens, 
       output_tokens: outputTokens, 
-      estimated: true 
+      estimated
     });
   }
 
@@ -272,22 +265,22 @@ export function formatUsage(inputTokens, outputTokens, targetFormat) {
     prompt_tokens: inputTokens,
     completion_tokens: outputTokens,
     total_tokens: inputTokens + outputTokens,
-    estimated: true
+    estimated
   });
 }
 
 /**
  * Estimate full usage when provider doesn't return it
  * @param {object} body - Request body for input token estimation
- * @param {number} contentLength - Content length for output token estimation
+ * @param {string} outputContent - Actual output text for tokenizer.encode(text).length
  * @param {string} targetFormat - Target format from FORMATS constant
  */
-export function estimateUsage(body, contentLength, targetFormat = FORMATS.OPENAI) {
-  return formatUsage(
-    estimateInputTokens(body),
-    estimateOutputTokens(contentLength),
-    targetFormat
-  );
+export function estimateUsage(body, outputContent = "", targetFormat = FORMATS.OPENAI) {
+  const model = body?.model;
+  const input = countRequestTokens(body, model);
+  const output = countTextTokens(outputContent, model);
+  const estimated = input.mode !== "exact" || output.mode !== "exact";
+  return formatUsage(input.count, output.count, targetFormat, estimated);
 }
 
 /**

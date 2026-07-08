@@ -92,13 +92,28 @@ export function createSSEStream(options = {}) {
 
   const state = mode === STREAM_MODE.TRANSLATE ? { ...initState(sourceFormat), provider, toolNameMap, model } : null;
 
-  let totalContentLength = 0;
+  let accumulatedOutputText = "";
   let accumulatedContent = "";
   let accumulatedThinking = "";
+  const appendOutputText = (value) => {
+    if (typeof value === "string" && value.length > 0) accumulatedOutputText += value;
+  };
+  const hasAccumulatedOutputText = () => accumulatedOutputText.length > 0;
   let ttftAt = null;
   let sseLineCount = 0;
   let sseEmittedCount = 0;
   const eventTypeCounts = {};
+
+  // Claude passthrough stream repair: track whether terminal events were received
+  const isClaudePassthrough = mode === STREAM_MODE.PASSTHROUGH && sourceFormat === FORMATS.CLAUDE;
+  let claudeLastBlockIndex = -1;
+  let claudeLastBlockStopped = true;
+  let claudeMessageDeltaSeen = false;
+  let claudeMessageStopSeen = false;
+  let claudeStopReason = null;
+  let claudeMessageId = null;
+  let claudeModel = null;
+  let claudeUsage = null;
 
   // Track Responses API event framing for same-format passthrough (codex)
   let currentOpenAIResponsesEvent = null;
@@ -166,33 +181,70 @@ export function createSSEStream(options = {}) {
                 }
               }
 
-              if (!hasValuableContent(parsed, FORMATS.OPENAI)) {
+              if (!hasValuableContent(parsed, isClaudePassthrough ? FORMATS.CLAUDE : FORMATS.OPENAI)) {
                 continue;
+              }
+
+              // Claude passthrough: track terminal event state
+              if (isClaudePassthrough) {
+                const evtType = parsed.type;
+                if (evtType === "message_start") {
+                  claudeMessageId = parsed.message?.id || null;
+                  claudeModel = parsed.message?.model || null;
+                } else if (evtType === "content_block_start") {
+                  claudeLastBlockIndex = parsed.index ?? claudeLastBlockIndex + 1;
+                  claudeLastBlockStopped = false;
+                  if (parsed.content_block?.type === "tool_use") {
+                    claudeStopReason = "tool_use";
+                  }
+                } else if (evtType === "content_block_stop") {
+                  claudeLastBlockStopped = true;
+                } else if (evtType === "message_delta") {
+                  claudeMessageDeltaSeen = true;
+                  if (parsed.delta?.stop_reason) claudeStopReason = parsed.delta.stop_reason;
+                  if (parsed.usage) claudeUsage = parsed.usage;
+                } else if (evtType === "message_stop") {
+                  claudeMessageStopSeen = true;
+                }
+
+                // Accumulate Claude content for usage estimation fallback
+                const claudeDelta = parsed.delta;
+                if (claudeDelta?.text && typeof claudeDelta.text === "string") {
+                  appendOutputText(claudeDelta.text);
+                  accumulatedContent += claudeDelta.text;
+                }
+                if (claudeDelta?.thinking && typeof claudeDelta.thinking === "string") {
+                  appendOutputText(claudeDelta.thinking);
+                  accumulatedThinking += claudeDelta.thinking;
+                }
+                if (claudeDelta?.partial_json && typeof claudeDelta.partial_json === "string") {
+                  appendOutputText(claudeDelta.partial_json);
+                }
               }
 
               const delta = parsed.choices?.[0]?.delta;
               const content = delta?.content;
               const reasoning = delta?.reasoning_content;
               if (content && typeof content === "string") {
-                totalContentLength += content.length;
+                appendOutputText(content);
                 accumulatedContent += content;
               }
               if (reasoning && typeof reasoning === "string") {
-                totalContentLength += reasoning.length;
+                appendOutputText(reasoning);
                 accumulatedThinking += reasoning;
               }
 
               // OpenAI Responses passthrough: delta is a string on response.*.delta
-              // events. Accumulate so totalContentLength > 0 and the usage-estimate
+              // events. Accumulate actual text so the usage
               // fallback can fire when upstream omits usage (e.g. dynamic
               // openai-compatible-responses connections), so Recent Requests + the
               // per-model table get a row with the real model name.
               if (typeof parsed.delta === "string" && parsed.delta) {
                 if (parsed.type === "response.output_text.delta") {
-                  totalContentLength += parsed.delta.length;
+                  appendOutputText(parsed.delta);
                   accumulatedContent += parsed.delta;
                 } else if (parsed.type === "response.reasoning_summary_text.delta" || parsed.type === "response.reasoning_text.delta") {
-                  totalContentLength += parsed.delta.length;
+                  appendOutputText(parsed.delta);
                   accumulatedThinking += parsed.delta;
                 }
               }
@@ -204,7 +256,7 @@ export function createSSEStream(options = {}) {
 
               const isFinishChunk = parsed.choices?.[0]?.finish_reason;
               if (isFinishChunk && !hasValidUsage(parsed.usage)) {
-                const estimated = estimateUsage(body, totalContentLength, FORMATS.OPENAI);
+                const estimated = estimateUsage(body, accumulatedOutputText, FORMATS.OPENAI);
                 parsed.usage = filterUsageForFormat(estimated, FORMATS.OPENAI);
                 output = `data: ${JSON.stringify(parsed)}\n`;
                 usage = estimated;
@@ -272,23 +324,23 @@ export function createSSEStream(options = {}) {
 
         // Claude format - content
         if (parsed.delta?.text) {
-          totalContentLength += parsed.delta.text.length;
+          appendOutputText(parsed.delta.text);
           accumulatedContent += parsed.delta.text;
         }
         // Claude format - thinking
         if (parsed.delta?.thinking) {
-          totalContentLength += parsed.delta.thinking.length;
+          appendOutputText(parsed.delta.thinking);
           accumulatedThinking += parsed.delta.thinking;
         }
         
         // OpenAI format - content
         if (parsed.choices?.[0]?.delta?.content) {
-          totalContentLength += parsed.choices[0].delta.content.length;
+          appendOutputText(parsed.choices[0].delta.content);
           accumulatedContent += parsed.choices[0].delta.content;
         }
         // OpenAI format - reasoning
         if (parsed.choices?.[0]?.delta?.reasoning_content) {
-          totalContentLength += parsed.choices[0].delta.reasoning_content.length;
+          appendOutputText(parsed.choices[0].delta.reasoning_content);
           accumulatedThinking += parsed.choices[0].delta.reasoning_content;
         }
         
@@ -296,7 +348,7 @@ export function createSSEStream(options = {}) {
         if (parsed.candidates?.[0]?.content?.parts) {
           for (const part of parsed.candidates[0].content.parts) {
             if (part.text && typeof part.text === "string") {
-              totalContentLength += part.text.length;
+              appendOutputText(part.text);
               // Check if this is thinking content
               if (part.thought === true) {
                 accumulatedThinking += part.text;
@@ -312,14 +364,14 @@ export function createSSEStream(options = {}) {
         if (extracted) state.usage = extracted; // Keep original usage for logging
 
         // OpenAI Responses format (same-format passthrough): delta is a string.
-        // Accumulate so totalContentLength > 0 enables the usage-estimate fallback
+        // Accumulate actual text for usage fallback
         // and Recent Requests gets a row even when upstream omits usage.
         if (typeof parsed.delta === "string" && parsed.delta) {
           if (parsed.type === "response.output_text.delta") {
-            totalContentLength += parsed.delta.length;
+            appendOutputText(parsed.delta);
             accumulatedContent += parsed.delta;
           } else if (parsed.type === "response.reasoning_summary_text.delta" || parsed.type === "response.reasoning_text.delta") {
-            totalContentLength += parsed.delta.length;
+            appendOutputText(parsed.delta);
             accumulatedThinking += parsed.delta;
           }
         }
@@ -357,8 +409,8 @@ export function createSSEStream(options = {}) {
 
             // Inject estimated usage if finish chunk has no valid usage
             const isFinishChunk = item.type === "message_delta" || item.choices?.[0]?.finish_reason;
-            if (state.finishReason && isFinishChunk && !hasValidUsage(item.usage) && totalContentLength > 0) {
-              const estimated = estimateUsage(body, totalContentLength, sourceFormat);
+            if (state.finishReason && isFinishChunk && !hasValidUsage(item.usage) && hasAccumulatedOutputText()) {
+              const estimated = estimateUsage(body, accumulatedOutputText, sourceFormat);
               item.usage = filterUsageForFormat(estimated, sourceFormat); // Filter + already has buffer
               state.usage = estimated;
             } else if (state.finishReason && isFinishChunk && state.usage) {
@@ -394,8 +446,17 @@ export function createSSEStream(options = {}) {
             controller.enqueue(sharedEncoder.encode(output));
           }
 
-          if (!hasValidUsage(usage) && totalContentLength > 0) {
-            usage = estimateUsage(body, totalContentLength, FORMATS.OPENAI);
+          // Claude passthrough: capture usage from message_delta if present, else estimate
+          if (isClaudePassthrough) {
+            const claudeExtracted = extractUsage(claudeUsage ? { type: "message_delta", usage: claudeUsage } : null);
+            if (claudeExtracted) usage = claudeExtracted;
+            if (!hasValidUsage(usage) && hasAccumulatedOutputText()) {
+              usage = estimateUsage(body, accumulatedOutputText, sourceFormat);
+            }
+          } else {
+            if (!hasValidUsage(usage) && hasAccumulatedOutputText()) {
+              usage = estimateUsage(body, accumulatedOutputText, FORMATS.OPENAI);
+            }
           }
 
           if (hasValidUsage(usage)) {
@@ -403,7 +464,34 @@ export function createSSEStream(options = {}) {
           } else {
             appendRequestLog({ model, provider, connectionId, tokens: null, status: "200 OK" }).catch(() => { });
           }
-          
+
+          // Claude passthrough stream repair: inject missing terminal events
+          if (isClaudePassthrough && (claudeLastBlockIndex >= 0 || claudeMessageId)) {
+            // Build a usage object for the message_delta, preferring real upstream usage
+            let repairUsage = claudeUsage;
+            if (!hasValidUsage(repairUsage)) {
+              const estimated = estimateUsage(body, accumulatedOutputText, sourceFormat);
+              repairUsage = filterUsageForFormat(estimated, sourceFormat);
+            }
+            if (!claudeLastBlockStopped && claudeLastBlockIndex >= 0) {
+              const repair = `event: content_block_stop\ndata: ${JSON.stringify({ type: "content_block_stop", index: claudeLastBlockIndex })}\n\n`;
+              reqLogger?.appendConvertedChunk?.(repair);
+              controller.enqueue(sharedEncoder.encode(repair));
+            }
+            if (!claudeMessageDeltaSeen) {
+              const stopReason = claudeStopReason || "end_turn";
+              const deltaPayload = { type: "message_delta", delta: { stop_reason: stopReason, stop_sequence: null }, usage: repairUsage || { output_tokens: 0 } };
+              const repair = `event: message_delta\ndata: ${JSON.stringify(deltaPayload)}\n\n`;
+              reqLogger?.appendConvertedChunk?.(repair);
+              controller.enqueue(sharedEncoder.encode(repair));
+            }
+            if (!claudeMessageStopSeen) {
+              const repair = `event: message_stop\ndata: ${JSON.stringify({ type: "message_stop" })}\n\n`;
+              reqLogger?.appendConvertedChunk?.(repair);
+              controller.enqueue(sharedEncoder.encode(repair));
+            }
+          }
+
           // IMPORTANT: In passthrough mode we still must terminate the SSE stream.
           // Some clients (e.g. OpenClaw) expect the OpenAI-style sentinel:
           //   data: [DONE]\n\n
@@ -477,8 +565,8 @@ export function createSSEStream(options = {}) {
           controller.enqueue(sharedEncoder.encode(doneOutput));
         }
 
-        if (!hasValidUsage(state?.usage) && totalContentLength > 0) {
-          state.usage = estimateUsage(body, totalContentLength, sourceFormat);
+        if (!hasValidUsage(state?.usage) && hasAccumulatedOutputText()) {
+          state.usage = estimateUsage(body, accumulatedOutputText, sourceFormat);
         }
 
         if (hasValidUsage(state?.usage)) {
@@ -516,9 +604,10 @@ export function createSSETransformStreamWithLogger(targetFormat, sourceFormat, p
   });
 }
 
-export function createPassthroughStreamWithLogger(provider = null, reqLogger = null, model = null, connectionId = null, body = null, onStreamComplete = null, apiKey = null) {
+export function createPassthroughStreamWithLogger(provider = null, reqLogger = null, model = null, connectionId = null, body = null, onStreamComplete = null, apiKey = null, sourceFormat = null) {
   return createSSEStream({
     mode: STREAM_MODE.PASSTHROUGH,
+    sourceFormat,
     provider,
     reqLogger,
     model,

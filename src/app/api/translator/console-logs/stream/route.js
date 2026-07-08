@@ -1,4 +1,4 @@
-import { getConsoleLogs, getConsoleEmitter, initConsoleLogCapture, setConsoleLogRetentionMs } from "@/lib/consoleLogBuffer";
+import { getConsoleLogEntries, getConsoleEmitter, initConsoleLogCapture, setConsoleLogRetentionMs } from "@/lib/consoleLogBuffer";
 import { getSettings } from "@/lib/localDb";
 
 export const dynamic = "force-dynamic";
@@ -30,16 +30,17 @@ export async function GET(request) {
   const stream = new ReadableStream({
     start(controller) {
       // Send all buffered logs immediately on connect
-      const buffered = getConsoleLogs();
+      const buffered = getConsoleLogEntries();
       if (buffered.length > 0) {
         controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: "init", logs: buffered })}\n\n`));
       }
 
       // Push new lines as they arrive
-      state.send = (line) => {
+      state.send = (entry) => {
         if (state.closed) return;
+        const payload = typeof entry === "string" ? { line: entry, createdAt: Date.now() } : entry;
         try {
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: "line", line })}\n\n`));
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: "line", entry: payload, line: payload.line })}\n\n`));
         } catch {
           cleanup();
         }

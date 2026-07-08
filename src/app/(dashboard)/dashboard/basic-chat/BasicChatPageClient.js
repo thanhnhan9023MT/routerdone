@@ -12,6 +12,11 @@ const STORAGE_KEYS = {
   draft: "basic-chat.draft",
 };
 
+const PDF_OCR_MAX_PAGES = 20;
+const PDF_OCR_MAX_CHARS = 60000;
+const PDF_OCR_SCALE = 1.5;
+const PDF_OCR_LANGS = ["vie+eng", "eng"];
+
 function createId() {
   if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
   return `chat_${Date.now()}_${Math.random().toString(16).slice(2)}`;
@@ -68,6 +73,34 @@ function makeSessionTitle(text = "") {
   return normalized.length > 52 ? `${normalized.slice(0, 52).trimEnd()}…` : normalized;
 }
 
+function isPdfFile(file) {
+  return file?.type === "application/pdf" || /\.pdf$/i.test(file?.name || "");
+}
+
+function isPdfOcrAttachment(attachment) {
+  return attachment?.kind === "pdf-ocr";
+}
+
+function isSendableAttachment(attachment) {
+  return !!attachment?.dataUrl || (isPdfOcrAttachment(attachment) && attachment.status === "done" && !!attachment.text?.trim());
+}
+
+function formatPdfOcrAttachmentText(attachment) {
+  const name = attachment?.name || "document.pdf";
+  const pageInfo = attachment?.pageCount
+    ? `${attachment.pagesRead || attachment.pageCount}/${attachment.pageCount} pages`
+    : "PDF";
+  const suffix = attachment?.truncated ? "\n[OCR truncated to keep the request under context limits.]" : "";
+  return `[OCR extracted from ${name} (${pageInfo})]\n${attachment.text || ""}${suffix}`;
+}
+
+function getPdfOcrStatusLabel(attachment) {
+  if (attachment?.status === "processing") return attachment.progress || "OCR processing";
+  if (attachment?.status === "error") return attachment.error || "OCR failed";
+  if (attachment?.pageCount) return `OCR ${attachment.pagesRead || attachment.pageCount}/${attachment.pageCount} pages`;
+  return "OCR ready";
+}
+
 function buildUserContent(message) {
   const text = textValue(message.content).trim();
   const attachments = Array.isArray(message.attachments) ? message.attachments : [];
@@ -80,6 +113,8 @@ function buildUserContent(message) {
   for (const attachment of attachments) {
     if (attachment?.dataUrl) {
       content.push({ type: "image_url", image_url: { url: attachment.dataUrl } });
+    } else if (isPdfOcrAttachment(attachment) && attachment.text?.trim()) {
+      content.push({ type: "text", text: formatPdfOcrAttachmentText(attachment) });
     }
   }
 
@@ -103,6 +138,84 @@ async function fileToDataUrl(file) {
     reader.onerror = () => reject(reader.error || new Error("Failed to read file"));
     reader.readAsDataURL(file);
   });
+}
+
+async function createOcrWorker(createWorker) {
+  let lastError = null;
+  for (const lang of PDF_OCR_LANGS) {
+    try {
+      const worker = await createWorker(lang);
+      await worker.setParameters?.({ preserve_interword_spaces: "1" });
+      return { worker, lang };
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError || new Error("Unable to start OCR worker");
+}
+
+async function extractPdfOcrText(file, onProgress) {
+  if (typeof document === "undefined") throw new Error("OCR requires a browser runtime");
+
+  const [pdfjsLib, tesseract] = await Promise.all([
+    import("pdfjs-dist/build/pdf.mjs"),
+    import("tesseract.js"),
+  ]);
+  const { worker, lang } = await createOcrWorker(tesseract.createWorker);
+  let pdf = null;
+  let truncated = false;
+
+  try {
+    const data = new Uint8Array(await file.arrayBuffer());
+    pdf = await pdfjsLib.getDocument({ data, disableWorker: true }).promise;
+    const pageCount = pdf.numPages || 0;
+    const pagesRead = Math.min(pageCount, PDF_OCR_MAX_PAGES);
+    const chunks = [];
+    let charCount = 0;
+
+    for (let pageNo = 1; pageNo <= pagesRead; pageNo += 1) {
+      onProgress?.({ pageNo, pagesRead, pageCount, lang });
+      const page = await pdf.getPage(pageNo);
+      const viewport = page.getViewport({ scale: PDF_OCR_SCALE });
+      const canvas = document.createElement("canvas");
+      const context = canvas.getContext("2d");
+      if (!context) throw new Error("Unable to create canvas context for OCR");
+
+      canvas.width = Math.ceil(viewport.width);
+      canvas.height = Math.ceil(viewport.height);
+      await page.render({ canvasContext: context, viewport }).promise;
+
+      const imageDataUrl = canvas.toDataURL("image/png");
+      const result = await worker.recognize(imageDataUrl);
+      const pageText = textValue(result?.data?.text).trim();
+      page.cleanup?.();
+      canvas.width = 0;
+      canvas.height = 0;
+
+      if (pageText) {
+        const remaining = PDF_OCR_MAX_CHARS - charCount;
+        if (pageText.length > remaining) {
+          chunks.push(`Page ${pageNo}:\n${pageText.slice(0, Math.max(0, remaining)).trimEnd()}`);
+          truncated = true;
+          break;
+        }
+        chunks.push(`Page ${pageNo}:\n${pageText}`);
+        charCount += pageText.length;
+      }
+    }
+
+    if (pageCount > pagesRead) truncated = true;
+    return {
+      text: chunks.join("\n\n").trim(),
+      pageCount,
+      pagesRead,
+      lang,
+      truncated,
+    };
+  } finally {
+    await worker.terminate?.();
+    await pdf?.destroy?.();
+  }
 }
 
 function cloneSession(session) {
@@ -364,7 +477,9 @@ export default function BasicChatPageClient() {
   const currentSession = useMemo(() => sessions.find((session) => session.id === activeSessionId) || null, [sessions, activeSessionId]);
   const currentMessages = currentSession?.messages || [];
   const sessionItems = useMemo(() => [...sessions].sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()), [sessions]);
-  const canSend = !isSending && !!activeModel && (draft.trim().length > 0 || attachments.length > 0);
+  const isProcessingAttachments = attachments.some((attachment) => attachment.status === "processing");
+  const hasSendableAttachment = attachments.some(isSendableAttachment);
+  const canSend = !isSending && !isProcessingAttachments && !!activeModel && (draft.trim().length > 0 || hasSendableAttachment);
 
   useEffect(() => {
     if (!isHydrated) return;
@@ -538,13 +653,14 @@ export default function BasicChatPageClient() {
     const files = Array.from(event.target.files || []);
     if (files.length === 0) return;
 
-    const images = files.filter((file) => file.type.startsWith("image/"));
-    if (images.length === 0) {
-      event.target.value = "";
-      return;
-    }
+    const supported = files.filter((file) => file.type.startsWith("image/") || isPdfFile(file));
+    event.target.value = "";
+    if (supported.length === 0) return;
 
-    const converted = await Promise.all(images.map(async (file) => ({
+    const images = supported.filter((file) => file.type.startsWith("image/"));
+    const pdfs = supported.filter(isPdfFile);
+    const convertedImages = await Promise.all(images.map(async (file) => ({
+      kind: "image",
       id: createId(),
       name: file.name,
       type: file.type,
@@ -552,8 +668,57 @@ export default function BasicChatPageClient() {
       dataUrl: await fileToDataUrl(file),
     })));
 
-    setAttachments((prev) => [...prev, ...converted]);
-    event.target.value = "";
+    const pendingPdfs = pdfs.map((file) => ({
+      kind: "pdf-ocr",
+      id: createId(),
+      name: file.name,
+      type: file.type || "application/pdf",
+      size: file.size,
+      status: "processing",
+      progress: "OCR queued",
+      file,
+    }));
+
+    setAttachments((prev) => [...prev, ...convertedImages, ...pendingPdfs]);
+
+    for (const pending of pendingPdfs) {
+      try {
+        const result = await extractPdfOcrText(pending.file, ({ pageNo, pagesRead }) => {
+          setAttachments((prev) => prev.map((attachment) => (
+            attachment.id === pending.id
+              ? { ...attachment, progress: `OCR ${pageNo}/${pagesRead}` }
+              : attachment
+          )));
+        });
+        setAttachments((prev) => prev.map((attachment) => (
+          attachment.id === pending.id
+            ? {
+              ...attachment,
+              file: undefined,
+              status: "done",
+              progress: "",
+              text: result.text || "[No text detected by OCR.]",
+              pageCount: result.pageCount,
+              pagesRead: result.pagesRead,
+              ocrLang: result.lang,
+              truncated: result.truncated,
+            }
+            : attachment
+        )));
+      } catch (error) {
+        setAttachments((prev) => prev.map((attachment) => (
+          attachment.id === pending.id
+            ? {
+              ...attachment,
+              file: undefined,
+              status: "error",
+              progress: "",
+              error: textValue(error?.message) || "OCR failed",
+            }
+            : attachment
+        )));
+      }
+    }
   };
 
   const removeAttachment = (attachmentId) => {
@@ -578,7 +743,8 @@ export default function BasicChatPageClient() {
     if (!model) return;
 
     const userText = draft.trim();
-    if (!userText && attachments.length === 0) return;
+    const readyAttachments = attachments.filter(isSendableAttachment);
+    if (!userText && readyAttachments.length === 0) return;
 
     let sessionId = activeSessionId;
     let session = sessions.find((item) => item.id === sessionId);
@@ -594,11 +760,19 @@ export default function BasicChatPageClient() {
       id: createId(),
       role: "user",
       content: userText,
-      attachments: attachments.map((attachment) => ({
+      attachments: readyAttachments.map((attachment) => ({
         id: attachment.id,
+        kind: attachment.kind || "image",
         name: attachment.name,
         type: attachment.type,
+        size: attachment.size,
         dataUrl: attachment.dataUrl,
+        text: attachment.text,
+        pageCount: attachment.pageCount,
+        pagesRead: attachment.pagesRead,
+        ocrLang: attachment.ocrLang,
+        truncated: attachment.truncated,
+        status: attachment.status,
       })),
       createdAt: new Date().toISOString(),
     };
@@ -892,11 +1066,29 @@ export default function BasicChatPageClient() {
 
                       {message.attachments?.length ? (
                         <div className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-3 mt-2">
-                          {message.attachments.map((attachment) => (
-                            <a key={attachment.id} href={attachment.dataUrl} target="_blank" rel="noreferrer" className="overflow-hidden rounded-[18px] border border-white/10 bg-black/20">
-                              <img src={attachment.dataUrl} alt={attachment.name} className="h-28 w-full object-cover" />
-                            </a>
-                          ))}
+                          {message.attachments.map((attachment) => {
+                            if (attachment.dataUrl) {
+                              return (
+                                <a key={attachment.id} href={attachment.dataUrl} target="_blank" rel="noreferrer" className="overflow-hidden rounded-[18px] border border-white/10 bg-black/20">
+                                  <img src={attachment.dataUrl} alt={attachment.name} className="h-28 w-full object-cover" />
+                                </a>
+                              );
+                            }
+
+                            if (isPdfOcrAttachment(attachment)) {
+                              return (
+                                <div key={attachment.id} className="flex min-h-24 flex-col justify-between rounded-[18px] border border-white/10 bg-black/20 p-3">
+                                  <div className="flex items-start gap-2">
+                                    <span className="material-symbols-outlined text-[22px] text-red-200/80">picture_as_pdf</span>
+                                    <span className="min-w-0 flex-1 truncate text-xs font-medium text-white/85">{attachment.name}</span>
+                                  </div>
+                                  <span className="text-[11px] text-white/50">{getPdfOcrStatusLabel(attachment)}</span>
+                                </div>
+                              );
+                            }
+
+                            return null;
+                          })}
                         </div>
                       ) : null}
 
@@ -915,8 +1107,16 @@ export default function BasicChatPageClient() {
             {attachments.length > 0 ? (
               <div className="mx-auto mb-3 flex w-full max-w-3xl flex-wrap gap-2 px-4">
                 {attachments.map((attachment) => (
-                  <div key={attachment.id} className="flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-2">
-                    <span className="text-xs text-white/80 max-w-[12rem] truncate">{attachment.name}</span>
+                  <div key={attachment.id} className={`flex max-w-full items-center gap-2 rounded-full border px-3 py-2 ${attachment.status === "error" ? "border-red-400/30 bg-red-500/10" : "border-white/10 bg-white/5"}`}>
+                    <span className="material-symbols-outlined text-[18px] text-white/60">
+                      {isPdfOcrAttachment(attachment) ? "picture_as_pdf" : "image"}
+                    </span>
+                    <span className="max-w-[12rem] truncate text-xs text-white/80">{attachment.name}</span>
+                    {isPdfOcrAttachment(attachment) ? (
+                      <span className={`max-w-[12rem] truncate text-[11px] ${attachment.status === "error" ? "text-red-200/80" : "text-white/45"}`}>
+                        {getPdfOcrStatusLabel(attachment)}
+                      </span>
+                    ) : null}
                     <button type="button" onClick={() => removeAttachment(attachment.id)} className="text-white/55 hover:text-white" aria-label="Remove attachment">
                       <span className="material-symbols-outlined text-[18px]">close</span>
                     </button>
@@ -941,7 +1141,7 @@ export default function BasicChatPageClient() {
                     <button type="button" onClick={() => fileInputRef.current?.click()} disabled={!activeModel || loadingData} className="p-2 text-white/50 hover:text-white transition rounded-full hover:bg-white/5">
                       <span className="material-symbols-outlined text-[20px]">attach_file</span>
                     </button>
-                    <input ref={fileInputRef} type="file" accept="image/*" multiple className="hidden" onChange={handleAttachFiles} />
+                    <input ref={fileInputRef} type="file" accept="image/*,application/pdf,.pdf" multiple className="hidden" onChange={handleAttachFiles} />
                     <span className="text-xs font-medium text-white/30 truncate max-w-[120px]">{activeModel ? activeModel.name : "No model"}</span>
                   </div>
 

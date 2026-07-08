@@ -1,11 +1,11 @@
 ﻿import { NextResponse } from "next/server";
 import { getSettings } from "@/lib/localDb";
-import bcrypt from "bcryptjs";
 import { cookies } from "next/headers";
 import { setDashboardAuthCookie } from "@/lib/auth/dashboardSession";
 import { isOidcConfigured } from "@/lib/auth/oidc";
 import { checkLock, recordFail, recordSuccess, getClientIp } from "@/lib/auth/loginLimiter";
 import { isLocalRequest } from "@/dashboardGuard";
+import { verifyPassword, isPasswordFromEnvMode } from "@/lib/auth/passwordAuth";
 
 const RESET_HINT = "Forgot password? Reset to default via RouterDone CLI → Settings → Reset Password to Default.";
 
@@ -42,14 +42,7 @@ export async function POST(request) {
       return NextResponse.json({ error: "Password login is disabled. Use OIDC sign in." }, { status: 403 });
     }
 
-    let isValid = false;
-    if (storedHash) {
-      isValid = await bcrypt.compare(password, storedHash);
-    } else {
-      // Use env var or default
-      const initialPassword = process.env.INITIAL_PASSWORD || "123456";
-      isValid = password === initialPassword;
-    }
+    const isValid = await verifyPassword(password);
 
     if (isValid) {
       recordSuccess(ip);
@@ -58,8 +51,12 @@ export async function POST(request) {
 
       // Default password still in use on a remote client → force a password
       // change before the dashboard is exposed remotely (keeps local UX intact).
+      // Skipped when PASSWORD_FROM_ENV=true (operator manages password via env).
       const mustChangePassword =
-        !storedHash && !process.env.INITIAL_PASSWORD && !isLocalRequest(request);
+        !isPasswordFromEnvMode() &&
+        !storedHash &&
+        !process.env.INITIAL_PASSWORD &&
+        !isLocalRequest(request);
 
       return NextResponse.json({ success: true, mustChangePassword });
     }

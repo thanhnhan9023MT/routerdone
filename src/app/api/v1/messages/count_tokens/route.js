@@ -1,4 +1,4 @@
-import { estimateRequestTokens } from "open-sse/utils/tokenEstimate.js";
+import { countRequestTokens } from "open-sse/utils/tokenEstimate.js";
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -14,7 +14,7 @@ export async function OPTIONS() {
 }
 
 /**
- * POST /v1/messages/count_tokens - Estimated token count response
+ * POST /v1/messages/count_tokens - Token count response
  */
 export async function POST(request) {
   let body;
@@ -27,12 +27,15 @@ export async function POST(request) {
     });
   }
 
-  const inputTokens = estimateRequestTokens(body);
+  const result = countRequestTokens(body, body?.model);
+  const payload = {
+    input_tokens: result.count,
+    mode: result.mode,
+    tokenizer: result.tokenizer,
+  };
+  if (result.confidence !== undefined) payload.confidence = result.confidence;
 
-  return new Response(JSON.stringify({
-    input_tokens: inputTokens
-  }), {
+  return new Response(JSON.stringify(payload), {
     headers: { "Content-Type": "application/json", ...CORS_HEADERS }
   });
 }
-

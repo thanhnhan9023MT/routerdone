@@ -19,7 +19,10 @@ const nextConfig = {
   },
   outputFileTracingRoot: tracingRoot,
   outputFileTracingExcludes: {
-    "*": ["./gitbook/**/*"]
+    "*": [
+      "./gitbook/**/*",
+      "./.next-build-home/**/*"
+    ]
   },
   images: {
     unoptimized: true

@@ -265,6 +265,27 @@ describe("DB SQLite layer — public API parity", () => {
     expect((await sqliteDb.getPricing()).openai?.["gpt-test"]).toBeUndefined();
   });
 
+  it("usage: today uses requested IANA timezone boundaries", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-01-02T08:00:00.000Z"));
+    try {
+      await sqliteDb.saveRequestUsage({
+        timestamp: "2026-01-01T18:30:00.000Z",
+        provider: "tz-test", model: "tz-model", connectionId: "tz-c1",
+        tokens: { prompt_tokens: 11, completion_tokens: 7 },
+        endpoint: "/v1/chat/completions", status: "ok",
+      });
+
+      const saigon = await sqliteDb.getUsageStats("today", "Asia/Saigon");
+      const losAngeles = await sqliteDb.getUsageStats("today", "America/Los_Angeles");
+
+      expect(saigon.byProvider["tz-test"]?.requests).toBe(1);
+      expect(saigon.totalPromptTokens).toBeGreaterThanOrEqual(11);
+      expect(losAngeles.byProvider["tz-test"]?.requests || 0).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
   it("getChartData: 24h buckets", async () => {
     const data = await sqliteDb.getChartData("24h");
     expect(data).toHaveLength(24);

@@ -100,6 +100,40 @@ describe("stripUnsupportedModalities", () => {
     expect(body.input[0].content.some((b) => b.type === "input_text" && /image omitted/.test(b.text))).toBe(true);
   });
 
+  it("responses: strips output image when vision:false", () => {
+    const body = { input: [{ type: "message", output: [
+      { type: "input_image", image_url: "data:image/png;base64,QUJD" },
+    ] }] };
+    stripUnsupportedModalities(body, FORMATS.OPENAI_RESPONSES, NO_VISION);
+    expect(body.input[0].output.some((b) => Object.hasOwn(b, "image_url"))).toBe(false);
+    expect(body.input[0].output.some((b) => b.type === "output_text" && /image omitted/.test(b.text))).toBe(true);
+  });
+
+  it("responses: strips invalid output image_url even when vision:true", () => {
+    const body = { input: [{ type: "message", output: [
+      { type: "input_image", image_url: "not-base64" },
+    ] }] };
+    expect(stripUnsupportedModalities(body, FORMATS.OPENAI_RESPONSES, ALL)).toBe(true);
+    expect(body.input[0].output.some((b) => Object.hasOwn(b, "image_url"))).toBe(false);
+    expect(body.input[0].output.some((b) => b.type === "output_text" && /invalid image data/.test(b.text))).toBe(true);
+  });
+
+  it("responses: keeps valid output image_url when vision:true", () => {
+    const body = { input: [{ type: "message", output: [
+      { type: "input_image", image_url: "data:image/png;base64,QUJD" },
+    ] }] };
+    expect(stripUnsupportedModalities(body, FORMATS.OPENAI_RESPONSES, ALL)).toBe(false);
+    expect(body.input[0].output[0].image_url).toBe("data:image/png;base64,QUJD");
+  });
+
+  it("responses: keeps remote output image_url when vision:true", () => {
+    const body = { input: [{ type: "message", output: [
+      { type: "input_image", image_url: "https://example.com/a.png" },
+    ] }] };
+    expect(stripUnsupportedModalities(body, FORMATS.OPENAI_RESPONSES, ALL)).toBe(false);
+    expect(body.input[0].output[0].image_url).toBe("https://example.com/a.png");
+  });
+
   it("handles missing/empty body safely", () => {
     expect(stripUnsupportedModalities(null, FORMATS.OPENAI, NO_VISION)).toBe(false);
     expect(stripUnsupportedModalities({}, FORMATS.OPENAI, null)).toBe(false);

@@ -26,6 +26,12 @@ irm https://raw.githubusercontent.com/thoa100m/routerdone/main/install.ps1 | iex
 
 Options: `PORT` (default 20128), `DIR` (default routerdone), `INITIAL_PASSWORD` (auto if unset). The admin password is printed at the end if it was auto-generated. Full per-scenario detail: `docs/INSTALL.md`.
 
+RouterDone is not installed with `npm i -g routerdone@latest`; use the Docker installer above or the source install guide. On Windows, start Docker Desktop before running the installer. If port `20128` is busy, use:
+
+```powershell
+$env:PORT='20130'; irm https://raw.githubusercontent.com/thoa100m/routerdone/main/install.ps1 | iex
+```
+
 ### Install Guide
 
 Detailed, step-by-step install for each scenario lives in `docs/INSTALL.md`:
@@ -255,6 +261,12 @@ irm https://raw.githubusercontent.com/thoa100m/routerdone/main/install.ps1 | iex
 ```
 
 Tùy chọn: `PORT` (mặc định 20128), `DIR` (mặc định routerdone), `INITIAL_PASSWORD` (tự sinh nếu để trống). Mật khẩu quản trị được in ở cuối nếu được tự sinh. Chi tiết theo từng trường hợp xem tại `docs/INSTALL.md`.
+
+RouterDone không cài bằng `npm i -g routerdone@latest`; hãy dùng installer Docker ở trên hoặc hướng dẫn cài từ mã nguồn. Trên Windows, mở Docker Desktop trước khi chạy installer. Nếu port `20128` đang bận, dùng:
+
+```powershell
+$env:PORT='20130'; irm https://raw.githubusercontent.com/thoa100m/routerdone/main/install.ps1 | iex
+```
 
 ### Hướng dẫn cài đặt
 

@@ -16,10 +16,13 @@ Default app port: `20128`. Default URL: `http://localhost:20128`.
 For Docker scenarios (A, B, C):
 - Docker Engine 24+ and Docker Compose v2 (`docker compose`, not `docker-compose`).
 - 2 GB free RAM, 2 GB free disk.
+- Windows: start Docker Desktop first and wait until the Docker engine is running.
 
 For local dev (D):
 - Node.js 20 or 22.
 - npm 10+.
+
+RouterDone is an app repository, not a global npm package. Do not install it with `npm i -g routerdone@latest`; use Docker or source install below.
 
 Generate secrets (Linux/macOS):
 
@@ -87,7 +90,13 @@ PORT=20130 docker compose up -d
 # then open http://localhost:20130
 ```
 
-Windows note: run Docker Desktop first. Use PowerShell, set env vars with `$env:NAME='value'` if you do not use an `.env` file.
+For the Windows one-line installer:
+
+```powershell
+$env:PORT='20130'; irm https://raw.githubusercontent.com/thoa100m/routerdone/main/install.ps1 | iex
+```
+
+Windows note: run Docker Desktop first and wait until it says Docker is running. Use PowerShell, set env vars with `$env:NAME='value'` if you do not use an `.env` file.
 
 ---
 

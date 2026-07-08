@@ -11,7 +11,11 @@ import {
   getModelFailureAtKey,
   MODEL_LOCK_PREFIX,
   checkFallbackError,
+  isClientPayloadError,
   isProviderSelfHealError,
+  shouldDisableConnectionForError,
+  isModelLockActive,
+  getEarliestModelLockUntil,
 } from "../../open-sse/services/accountFallback.js";
 import {
   MODEL_FAILURE_BACKOFF_BASE_MS,
@@ -83,6 +87,23 @@ describe("per-model consecutive-failure backoff", () => {
   });
 });
 
+describe("model DB lock scope", () => {
+  it("can ignore per-model locks while preserving account-level locks", () => {
+    const future = new Date(Date.now() + 60_000).toISOString();
+    expect(isModelLockActive({ "modelLock_gpt-4": future }, "gpt-4")).toBe(true);
+    expect(isModelLockActive({ "modelLock_gpt-4": future }, "gpt-4", { ignoreModelLocks: true })).toBe(false);
+    expect(isModelLockActive({ "modelLock___all": future }, "gpt-4", { ignoreModelLocks: true })).toBe(true);
+  });
+
+  it("ignores per-model lock expiries when computing combo retry timing", () => {
+    const modelExpiry = new Date(Date.now() + 30_000).toISOString();
+    const allExpiry = new Date(Date.now() + 60_000).toISOString();
+    const conn = { "modelLock_gpt-4": modelExpiry, "modelLock___all": allExpiry };
+    expect(getEarliestModelLockUntil(conn)).toBe(modelExpiry);
+    expect(getEarliestModelLockUntil(conn, { ignoreModelLocks: true })).toBe(allExpiry);
+  });
+});
+
 describe("429 rate-limit neutrality", () => {
   it("429 keeps a fixed base cooldown without bumping the counter", () => {
     const conn = { "modelFailure_gpt-4": 3, "modelFailureAt_gpt-4": Date.now() };
@@ -114,6 +135,16 @@ describe("429 rate-limit neutrality", () => {
 });
 
 describe("provider self-heal errors", () => {
+  it("does not fallback or lock for invalid client image_url payloads", () => {
+    const errorText = "Invalid 'input[71].content[2].image_url'. Expected a valid URL, but got a value with an invalid format.";
+    expect(isClientPayloadError(400, errorText)).toBe(true);
+    expect(checkFallbackError(400, errorText)).toMatchObject({
+      shouldFallback: false,
+      cooldownMs: 0,
+      clientError: true,
+    });
+  });
+
   it("classifies empty upstream stream as a short self-heal provider error", () => {
     const r = checkFallbackError(502, "Empty upstream stream (terminal before productive)");
     expect(r).toMatchObject({
@@ -156,6 +187,18 @@ describe("provider self-heal errors", () => {
     });
     expect(isProviderSelfHealError(400, errorText)).toBe(true);
   });
+
+  it("classifies Cloudflare 530 HTML provider pages as short self-heal errors", () => {
+    const errorText = "[530]: <!doctype html> <!--[if lt IE 7]> <html class=\"no-js ie6 oldie\" lang=\"en-US\">";
+    const r = checkFallbackError(530, errorText);
+    expect(r).toMatchObject({
+      shouldFallback: true,
+      cooldownMs: PROVIDER_SELF_HEAL_COOLDOWN_MS,
+      selfHeal: true,
+    });
+    expect(isProviderSelfHealError(530, errorText)).toBe(true);
+  });
+
   it("does not bump model failure counters for self-heal errors", () => {
     const conn = {
       "modelFailure_claude-opus-4-8": 4,
@@ -204,5 +247,20 @@ describe("isRateLimitError classification", () => {
     expect(isRateLimitError(500, "internal error")).toBe(false);
     expect(isRateLimitError(502, "bad gateway")).toBe(false);
     expect(isRateLimitError(401, "invalid key")).toBe(false);
+  });
+});
+
+describe("auto-disable billing errors", () => {
+  it("disables 402 payment errors", () => {
+    expect(shouldDisableConnectionForError(402, "Payment required")).toBe(true);
+  });
+
+  it("disables 403 credit exhaustion from Pay-as-you-go wallets", () => {
+    const errorText = '{"error":{"message":"hết credit (ví Pay-as-you-go)"}}';
+    expect(shouldDisableConnectionForError(403, errorText)).toBe(true);
+  });
+
+  it("does not disable unrelated 403 errors", () => {
+    expect(shouldDisableConnectionForError(403, "request not allowed")).toBe(false);
   });
 });

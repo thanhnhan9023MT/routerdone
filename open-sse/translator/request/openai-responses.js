@@ -6,7 +6,7 @@
  */
 import { register } from "../index.js";
 import { FORMATS } from "../formats.js";
-import { normalizeResponsesInput } from "../formats/responsesApi.js";
+import { normalizeResponsesInput, toOpenAIContentBlock } from "../formats/responsesApi.js";
 import { ROLE, OPENAI_BLOCK, RESPONSES_ITEM } from "../schema/index.js";
 
 // Responses API enforces max 64 chars on call_id (#393)
@@ -67,19 +67,14 @@ export function openaiResponsesToOpenAIRequest(model, body, stream, credentials)
         pendingToolResults = [];
       }
 
-      // Convert content: input_text → text, output_text → text, input_image → image_url
-      const content = Array.isArray(item.content)
-        ? item.content.map(c => {
-          if (c.type === RESPONSES_ITEM.INPUT_TEXT) return { type: OPENAI_BLOCK.TEXT, text: c.text };
-          if (c.type === RESPONSES_ITEM.OUTPUT_TEXT) return { type: OPENAI_BLOCK.TEXT, text: c.text };
-          if (c.type === RESPONSES_ITEM.INPUT_IMAGE) {
-            const url = c.image_url || c.file_id || "";
-            return { type: OPENAI_BLOCK.IMAGE_URL, image_url: { url, detail: c.detail || "auto" } };
-          }
-          return c;
-        })
+      // Convert content/output: input_text/output_text -> text, image blocks -> image_url.
+      const blocks = [];
+      if (Array.isArray(item.content)) blocks.push(...item.content);
+      if (Array.isArray(item.output)) blocks.push(...item.output);
+      const content = blocks.length > 0
+        ? blocks.map(toOpenAIContentBlock)
         : item.content;
-      const msg = { role: item.role, content };
+      const msg = { role: item.role || ROLE.USER, content };
       // Attach buffered reasoning to assistant turn (required by xiaomi-mimo thinking mode)
       if (item.role === ROLE.ASSISTANT && pendingReasoning) {
         msg.reasoning_content = pendingReasoning;
@@ -221,13 +216,14 @@ export function openaiToOpenAIResponsesRequest(model, body, stream, credentials)
   const messages = body.messages || [];
 
   for (const msg of messages) {
-    if (msg.role === ROLE.SYSTEM) {
-      // Use first system message as instructions
+    if (msg.role === ROLE.SYSTEM || msg.role === ROLE.DEVELOPER) {
+      // Use the first instruction-bearing message as instructions.
+      // OpenAI recommends role="developer" for GPT-5/Codex as the system-level prompt.
       if (!hasSystemMessage) {
         result.instructions = typeof msg.content === "string" ? msg.content : "";
         hasSystemMessage = true;
       }
-      continue; // Skip system messages in input
+      continue; // Skip instruction messages in input
     }
 
     // Convert user/assistant messages to input items
@@ -316,6 +312,8 @@ export function openaiToOpenAIResponsesRequest(model, body, stream, credentials)
   if (body.temperature !== undefined) result.temperature = body.temperature;
   if (body.max_tokens !== undefined) result.max_tokens = body.max_tokens;
   if (body.top_p !== undefined) result.top_p = body.top_p;
+  if (body.reasoning !== undefined) result.reasoning = body.reasoning;
+  if (body.reasoning_effort !== undefined) result.reasoning = { effort: body.reasoning_effort, summary: "auto" };
 
   return result;
 }

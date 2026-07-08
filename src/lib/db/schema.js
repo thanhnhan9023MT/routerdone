@@ -79,6 +79,16 @@ export const TABLES = {
       machineId: "TEXT",
       isActive: "INTEGER DEFAULT 1",
       createdAt: "TEXT NOT NULL",
+      // Per-key token limit policy (resale / donate quota).
+      // limitType: 'unlimited' | 'total' (lifetime) | 'daily' (reset per tz day).
+      limitType: "TEXT DEFAULT 'unlimited'",
+      tokenLimit: "INTEGER DEFAULT 0",
+      // Cached counters, incremented atomically inside saveRequestUsage tx.
+      usedTokens: "INTEGER DEFAULT 0",
+      usedDailyTokens: "INTEGER DEFAULT 0",
+      usedDailyDateKey: "TEXT",
+      // JSON { type: 'all'|'model'|'combo', value: string|null }.
+      allowedModels: "TEXT",
     },
     indexes: ["CREATE INDEX IF NOT EXISTS idx_ak_key ON apiKeys(key)"],
   },
@@ -123,6 +133,7 @@ export const TABLES = {
       "CREATE INDEX IF NOT EXISTS idx_uh_provider ON usageHistory(provider)",
       "CREATE INDEX IF NOT EXISTS idx_uh_model ON usageHistory(model)",
       "CREATE INDEX IF NOT EXISTS idx_uh_conn ON usageHistory(connectionId)",
+      "CREATE INDEX IF NOT EXISTS idx_uh_apikey ON usageHistory(apiKey)",
     ],
   },
   usageDaily: {

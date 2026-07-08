@@ -3,6 +3,8 @@ import { PROVIDERS } from "../config/providers.js";
 import { v4 as uuidv4 } from "uuid";
 import { refreshKiroToken } from "../services/tokenRefresh.js";
 import { SSE_DONE, SSE_HEADERS } from "../utils/sseConstants.js";
+import { estimateUsage } from "../utils/usageTracking.js";
+import { FORMATS } from "../translator/formats.js";
 
 /**
  * KiroExecutor - Executor for Kiro AI (AWS CodeWhisperer)
@@ -87,7 +89,7 @@ export class KiroExecutor extends BaseExecutor {
   async execute(args) {
     const result = await super.execute(args);
     if (result?.response?.ok) {
-      result.response = this.transformEventStreamToSSE(result.response, args.model);
+      result.response = this.transformEventStreamToSSE(result.response, args.model, args.body);
     }
     return result;
   }
@@ -96,7 +98,7 @@ export class KiroExecutor extends BaseExecutor {
    * Transform AWS EventStream binary response to SSE text stream
    * Using TransformStream instead of ReadableStream.pull() to avoid Workers timeout
    */
-  transformEventStreamToSSE(response, model) {
+  transformEventStreamToSSE(response, model, body) {
     let buffer = new Uint8Array(0);
     let chunkIndex = 0;
     const responseId = `chatcmpl-${Date.now()}`;
@@ -139,14 +141,14 @@ export class KiroExecutor extends BaseExecutor {
 
           const eventType = event.headers[":event-type"] || "";
 
-          // Track total content length for token estimation
-          if (!state.totalContentLength) state.totalContentLength = 0;
+          // Track actual output text for tokenizer-based usage fallback
+          if (!state.outputContent) state.outputContent = "";
           if (!state.contextUsagePercentage) state.contextUsagePercentage = 0;
 
           // Handle assistantResponseEvent
           if (eventType === "assistantResponseEvent" && event.payload?.content) {
             const content = event.payload.content;
-            state.totalContentLength += content.length;
+            state.outputContent += content;
 
             const chunk = {
               id: responseId,
@@ -177,7 +179,7 @@ export class KiroExecutor extends BaseExecutor {
               : (reasoning.text || reasoning.content || "");
             if (reasoningText) {
               state.hasReasoningContent = true;
-              state.totalContentLength += reasoningText.length;
+              state.outputContent += reasoningText;
 
               const reasoningDelta = state.reasoningChunkCount === 0 && chunkIndex === 0
                 ? { role: "assistant", reasoning_content: reasoningText }
@@ -351,22 +353,7 @@ export class KiroExecutor extends BaseExecutor {
 
             // Estimate tokens if not available from events
             if (!state.usage) {
-              // Estimate output tokens from content length
-              const estimatedOutputTokens = state.totalContentLength > 0
-                ? Math.max(1, Math.floor(state.totalContentLength / 4))
-                : 0;
-
-              // Estimate input tokens from contextUsagePercentage
-              // Kiro models typically have 200k context window
-              const estimatedInputTokens = state.contextUsagePercentage > 0
-                ? Math.floor(state.contextUsagePercentage * 200000 / 100)
-                : 0;
-
-              state.usage = {
-                prompt_tokens: estimatedInputTokens,
-                completion_tokens: estimatedOutputTokens,
-                total_tokens: estimatedInputTokens + estimatedOutputTokens
-              };
+              state.usage = estimateUsage(body, state.outputContent || "", FORMATS.OPENAI);
             }
 
             const finishChunk = {

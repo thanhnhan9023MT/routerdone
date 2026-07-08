@@ -58,7 +58,7 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   const modelTargetFormat = getModelTargetFormat(alias, model);
   // Multi-endpoint providers: pick transport matching sourceFormat → zero translation
   const runtimeTransport = resolveTransport(provider, sourceFormat);
-  const targetFormat = modelTargetFormat || runtimeTransport?.format || getTargetFormat(provider);
+  const targetFormat = modelTargetFormat || runtimeTransport?.format || getTargetFormat(provider, credentials);
   if (runtimeTransport && credentials) credentials.runtimeTransport = runtimeTransport;
   const stripList = getModelStrip(alias, model);
   const upstreamModel = getModelUpstreamId(alias, model);
@@ -214,17 +214,18 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   // Input size verification: estimate input tokens after all token savers.
   // Logs per-request input size for monitoring and enforces a hard cap that
   // signals compact when the conversation exceeds the model context window.
-  let estInputTokens = estimateInputTokens(translatedBody);
+  let estInputTokens = estimateInputTokens(translatedBody, upstreamModel);
   if (estInputTokens > hardCapTokens && !isCompact) {
     const pruneStats = pruneContextToHardCap(translatedBody, {
       enabled: contextGuardEnabled !== false,
       hardCapTokens,
       keepRecent: effectiveContextGuardKeepRecent,
       isCompact,
+      model: upstreamModel,
     });
     const pruneLine = formatHardCapPruneLog(pruneStats);
     if (pruneLine) console.log(pruneLine);
-    estInputTokens = estimateInputTokens(translatedBody);
+    estInputTokens = estimateInputTokens(translatedBody, upstreamModel);
   }
   console.log(`[CTX-GUARD] input ~${estInputTokens} tokens | cap ${hardCapTokens} (ctx ${modelCtxWindow})${isCompact ? " | compact" : ""}`);
   if (estInputTokens > hardCapTokens && !isCompact) {

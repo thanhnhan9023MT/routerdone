@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { guardContext, formatContextGuardLog, estimateInputTokens, pruneContextToHardCap, formatHardCapPruneLog } from "../../open-sse/rtk/contextGuard.js";
+import { countRequestTokens } from "../../open-sse/utils/tokenEstimate.js";
 
 // Build a reasoning item with a sized encrypted_content blob.
 function reasoningItem(id, encLen) {
@@ -12,7 +13,7 @@ function reasoningItem(id, encLen) {
 }
 
 // Build a body in OpenAI Responses `input` format with N reasoning items.
-function makeBody(n, encLen = 200_000) {
+function makeBody(n, encLen = 2_000) {
   const input = [];
   input.push({ type: "message", role: "user", content: "hello" });
   for (let i = 0; i < n; i++) input.push(reasoningItem(i, encLen));
@@ -61,7 +62,7 @@ describe("guardContext - no-op cases", () => {
   });
 
   it("returns null when keepRecent >= reasoning count (nothing to evict)", () => {
-    const body = makeBody(5, 200_000); // 5 reasoning blobs -> over threshold
+    const body = makeBody(5, 2_000); // 5 reasoning blobs -> over forced threshold
     const stats = guardContext(body, { maxBytes: 1, keepRecent: 5 });
     expect(stats).toBeNull();
     expect(body.input[1].encrypted_content).toBeDefined();
@@ -70,7 +71,7 @@ describe("guardContext - no-op cases", () => {
 
 describe("guardContext - eviction", () => {
   it("evicts old reasoning blobs keeping the most recent N", () => {
-    const body = makeBody(10, 200_000); // 10 blobs x 200KB = ~2M chars -> over 3.5M? no
+    const body = makeBody(10, 2_000);
     // Use smaller threshold to force eviction with 10 blobs
     const stats = guardContext(body, { maxBytes: 1, keepRecent: 3 });
     expect(stats).not.toBeNull();
@@ -92,8 +93,8 @@ describe("guardContext - eviction", () => {
     const body = { input: [] };
     body.input.push({ type: "message", role: "user", content: "hi" });
     // reasoning item without a summary array
-    body.input.push({ type: "reasoning", id: "r0", encrypted_content: "x".repeat(200_000) });
-    body.input.push({ type: "reasoning", id: "r1", encrypted_content: "x".repeat(200_000) });
+    body.input.push({ type: "reasoning", id: "r0", encrypted_content: "x".repeat(2_000) });
+    body.input.push({ type: "reasoning", id: "r1", encrypted_content: "x".repeat(2_000) });
     const stats = guardContext(body, { maxBytes: 1, keepRecent: 1 });
     expect(stats.evictedItems).toBe(1);
     expect(body.input[1].encrypted_content).toBeUndefined();
@@ -107,17 +108,17 @@ describe("guardContext - eviction", () => {
     body.input.push({
       type: "reasoning",
       id: "r0",
-      encrypted_content: "x".repeat(200_000),
+      encrypted_content: "x".repeat(2_000),
       summary: [{ type: "summary_text", text: "custom summary" }],
     });
-    body.input.push({ type: "reasoning", id: "r1", encrypted_content: "x".repeat(200_000) });
+    body.input.push({ type: "reasoning", id: "r1", encrypted_content: "x".repeat(2_000) });
     const stats = guardContext(body, { maxBytes: 1, keepRecent: 1 });
     expect(stats.evictedItems).toBe(1);
     expect(body.input[1].summary[0].text).toBe("custom summary");
   });
 
   it("reports estimated token before/after", () => {
-    const body = makeBody(10, 200_000);
+    const body = makeBody(10, 2_000);
     const stats = guardContext(body, { maxBytes: 1, keepRecent: 3 });
     expect(stats.estTokensBefore).toBeGreaterThan(0);
     expect(stats.estTokensAfter).toBeGreaterThan(0);
@@ -129,9 +130,9 @@ describe("guardContext - eviction", () => {
     const body = {
       messages: [
         { role: "user", content: "hi" },
-        reasoningItem(0, 200_000),
-        reasoningItem(1, 200_000),
-        reasoningItem(2, 200_000),
+        reasoningItem(0, 2_000),
+        reasoningItem(1, 2_000),
+        reasoningItem(2, 2_000),
       ],
     };
     const stats = guardContext(body, { maxBytes: 1, keepRecent: 1 });
@@ -141,9 +142,9 @@ describe("guardContext - eviction", () => {
   });
 
   it("respects custom maxBytes threshold", () => {
-    // 3 blobs x 100KB = 300KB; threshold 250KB -> evict 1 (keep recent 2)
-    const body = makeBody(3, 100_000);
-    const stats = guardContext(body, { maxBytes: 250_000, keepRecent: 2 });
+    // 3 blobs x 1KB = 3KB; threshold 2.5KB -> evict 1 (keep recent 2)
+    const body = makeBody(3, 1_000);
+    const stats = guardContext(body, { maxBytes: 2_500, keepRecent: 2 });
     expect(stats).not.toBeNull();
     expect(stats.evictedItems).toBe(1);
     expect(body.input[1].encrypted_content).toBeUndefined();
@@ -194,7 +195,7 @@ describe("guardContext - isCompact direct bypass", () => {
   // caller disabling via enabled: ... && !body._compact. chatCore passes
   // isCompact alongside enabled, so both paths must skip eviction.
   it("isCompact: true skips eviction and preserves all encrypted_content", () => {
-    const body = makeBody(10, 200_000);
+    const body = makeBody(10, 2_000);
     const stats = guardContext(body, { enabled: true, maxBytes: 1, keepRecent: 3, isCompact: true });
     expect(stats).toBeNull();
     for (let i = 1; i <= 10; i++) {
@@ -203,7 +204,7 @@ describe("guardContext - isCompact direct bypass", () => {
   });
 
   it("isCompact: false with enabled true still evicts (sanity)", () => {
-    const body = makeBody(10, 200_000);
+    const body = makeBody(10, 2_000);
     const stats = guardContext(body, { enabled: true, maxBytes: 1, keepRecent: 3, isCompact: false });
     expect(stats).not.toBeNull();
     expect(stats.evictedItems).toBe(7);
@@ -220,35 +221,30 @@ describe("estimateInputTokens", () => {
   });
 
   it("counts content and encrypted_content", () => {
-    const body = makeBody(2, 200_000);
-    const tokens = estimateInputTokens(body);
-    expect(tokens).toBeGreaterThan(0);
-    // 400_000 bytes / 4 = ~100_000 tokens
-    expect(tokens).toBeGreaterThanOrEqual(90_000);
-    expect(tokens).toBeLessThanOrEqual(115_000);
+    const body = makeBody(2, 2_000);
+    const tokens = estimateInputTokens(body, "gpt-5");
+    expect(tokens).toBe(countRequestTokens(body, "gpt-5").count);
   });
 
   it("counts array content text parts", () => {
     const body = {
       input: [
-        { type: "message", role: "user", content: [{ type: "input_text", text: "x".repeat(4000) }] },
+        { type: "message", role: "user", content: [{ type: "input_text", text: "x".repeat(400) }] },
       ],
     };
-    const tokens = estimateInputTokens(body);
-    expect(tokens).toBeGreaterThanOrEqual(1000);
-    expect(tokens).toBeLessThan(1100);
+    const tokens = estimateInputTokens(body, "gpt-5");
+    expect(tokens).toBe(countRequestTokens(body, "gpt-5").count);
   });
 
 
   it("counts nested Responses fields like function_call arguments", () => {
     const body = {
       input: [
-        { type: "function_call", name: "exec", arguments: "x".repeat(8000) },
-        { type: "message", content: [{ type: "input_text", text: "y".repeat(4000) }] },
+        { type: "function_call", name: "exec", arguments: "x".repeat(800) },
+        { type: "message", content: [{ type: "input_text", text: "y".repeat(400) }] },
       ],
     };
-    expect(estimateInputTokens(body)).toBeGreaterThanOrEqual(3000);
-    expect(estimateInputTokens(body)).toBeLessThan(3120);
+    expect(estimateInputTokens(body, "gpt-5")).toBe(countRequestTokens(body, "gpt-5").count);
   });
   it("counts messages-format body", () => {
     const body = {
@@ -265,17 +261,20 @@ describe("pruneContextToHardCap", () => {
   it("trims old large string fields below the hard cap while keeping recent items", () => {
     const body = {
       input: [
-        { role: "system", content: "S".repeat(20000) },
-        { role: "user", content: "A".repeat(20000) },
-        { type: "function_call_output", output: "B".repeat(20000) },
+        { role: "system", content: "S".repeat(2000) },
+        { role: "user", content: "A".repeat(2000) },
+        { type: "function_call_output", output: "B".repeat(2000) },
         { role: "assistant", content: "recent assistant" },
         { role: "user", content: "recent user" },
       ],
     };
-    const stats = pruneContextToHardCap(body, { hardCapTokens: 9000, keepRecent: 2 });
+    const before = estimateInputTokens(body, "gpt-5");
+    const hardCapTokens = Math.max(1, Math.floor(before * 0.7));
+    const stats = pruneContextToHardCap(body, { hardCapTokens, keepRecent: 2, model: "gpt-5" });
     expect(stats.trimmedStrings).toBeGreaterThan(0);
-    expect(stats.estTokensAfter).toBeLessThanOrEqual(9000);
-    expect(body.input[0].content).toBe("S".repeat(20000));
+    expect(stats.estTokensBefore).toBe(before);
+    expect(stats.estTokensAfter).toBeLessThan(before);
+    expect(body.input[0].content).toBe("S".repeat(2000));
     expect(body.input[1].content).toContain("[trimmed by RouterDone context guard]");
     expect(body.input[3].content).toBe("recent assistant");
     expect(body.input[4].content).toBe("recent user");

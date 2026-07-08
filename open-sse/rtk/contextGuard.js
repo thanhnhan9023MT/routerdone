@@ -10,9 +10,9 @@ import { estimateRequestTokens } from "../utils/tokenEstimate.js";
 // guard fills the gap by trimming old reasoning blobs while preserving recent
 // ones for continuity.
 
-const DEFAULT_MAX_BYTES = 3_500_000; // ~875K tokens (4 chars/token); catches >1M-token drift
+const DEFAULT_MAX_BYTES = 3_500_000; // byte threshold for oversized request payloads
 const DEFAULT_KEEP_RECENT = 8;       // keep last N reasoning items intact
-const CHARS_PER_TOKEN = 4;           // rough estimate for logging only
+const CHARS_PER_TOKEN = 4;           // byte-prune sizing fallback; not used for token reporting
 const TRIM_PLACEHOLDER = "[trimmed by RouterDone context guard]";
 
 // Find the conversation items array across supported request formats.
@@ -124,7 +124,7 @@ function evictOldReasoning(items, reasoning, keepRecent) {
 // Public entry. Returns stats object or null when nothing changed.
 // isCompact: skip eviction during Codex context-handoff/compaction requests so
 // upstream /compact receives full reasoning blobs to summarize.
-export function guardContext(body, { enabled = true, maxBytes = DEFAULT_MAX_BYTES, keepRecent = DEFAULT_KEEP_RECENT, isCompact = false } = {}) {
+export function guardContext(body, { enabled = true, maxBytes = DEFAULT_MAX_BYTES, keepRecent = DEFAULT_KEEP_RECENT, isCompact = false, model = body?.model } = {}) {
   if (!enabled || !body || isCompact) return null;
 
   const items = findItems(body);
@@ -136,37 +136,36 @@ export function guardContext(body, { enabled = true, maxBytes = DEFAULT_MAX_BYTE
   const estBytes = estimateBytes(items);
   if (estBytes < maxBytes) return null;
 
+  const beforeTokens = estimateInputTokens(body, model);
   const result = evictOldReasoning(items, reasoning, keepRecent);
   if (!result) return null;
 
-  const estTokens = Math.round(estBytes / CHARS_PER_TOKEN);
-  const afterTokens = Math.round((estBytes - result.evictedBytes) / CHARS_PER_TOKEN);
   return {
     ...result,
     estBytesBefore: estBytes,
-    estTokensBefore: estTokens,
-    estTokensAfter: afterTokens,
+    estTokensBefore: beforeTokens,
+    estTokensAfter: estimateInputTokens(body, model),
     threshold: maxBytes,
   };
 }
 
 // Estimate input token count from the full request body. Reused by chatCore
 // for per-request input logging and hard-cap enforcement.
-export function estimateInputTokens(body) {
+export function estimateInputTokens(body, model = body?.model) {
   if (!body || typeof body !== "object") return 0;
   const items = findItems(body);
   if (!items || items.length === 0) return 0;
-  return estimateRequestTokens(body);
+  return estimateRequestTokens(body, model);
 }
 
 // Format a log line from guard stats.
 
-export function pruneContextToHardCap(body, { enabled = true, hardCapTokens = 0, keepRecent = DEFAULT_KEEP_RECENT, isCompact = false } = {}) {
+export function pruneContextToHardCap(body, { enabled = true, hardCapTokens = 0, keepRecent = DEFAULT_KEEP_RECENT, isCompact = false, model = body?.model } = {}) {
   if (!enabled || !body || isCompact || hardCapTokens <= 0) return null;
   const items = findItems(body);
   if (!items || items.length === 0) return null;
 
-  const beforeTokens = estimateInputTokens(body);
+  const beforeTokens = estimateInputTokens(body, model);
   if (beforeTokens <= hardCapTokens) return null;
 
   const targetTokens = Math.max(1, Math.floor(hardCapTokens * 0.95));
@@ -188,7 +187,7 @@ export function pruneContextToHardCap(body, { enabled = true, hardCapTokens = 0,
     trimmedStrings: budget.trimmedStrings,
     savedBytes: budget.saved,
     estTokensBefore: beforeTokens,
-    estTokensAfter: estimateInputTokens(body),
+    estTokensAfter: estimateInputTokens(body, model),
     hardCapTokens,
     targetTokens,
   };

@@ -2,6 +2,8 @@ import { BaseExecutor } from "./base.js";
 import { PROVIDERS } from "../config/providers.js";
 import { SSE_DONE, SSE_HEADERS_NO_BUFFER } from "../utils/sseConstants.js";
 import { sseChunk } from "../utils/sse.js";
+import { estimateUsage } from "../utils/usageTracking.js";
+import { FORMATS } from "../translator/formats.js";
 
 const PPLX_SSE_ENDPOINT = PROVIDERS["perplexity-web"].baseUrl;
 const PPLX_API_VERSION = "2.18";
@@ -354,7 +356,7 @@ function buildStreamingResponse(eventStream, model, cid, created, history, curre
   });
 }
 
-async function buildNonStreamingResponse(eventStream, model, cid, created, history, currentMsg, signal) {
+async function buildNonStreamingResponse(eventStream, model, body, cid, created, history, currentMsg, signal) {
   let fullAnswer = "";
   let respBackendUuid = null;
   const thinkingParts = [];
@@ -378,13 +380,12 @@ async function buildNonStreamingResponse(eventStream, model, cid, created, histo
   const msg = { role: "assistant", content: fullAnswer };
   if (reasoningContent) msg.reasoning_content = reasoningContent;
 
-  const promptTokens = Math.ceil(currentMsg.length / 4);
-  const completionTokens = Math.ceil(fullAnswer.length / 4);
+  const estimatedUsageObj = estimateUsage(body, fullAnswer, FORMATS.OPENAI);
 
   return new Response(JSON.stringify({
     id: cid, object: "chat.completion", created, model, system_fingerprint: null,
     choices: [{ index: 0, message: msg, finish_reason: "stop", logprobs: null }],
-    usage: { prompt_tokens: promptTokens, completion_tokens: completionTokens, total_tokens: promptTokens + completionTokens },
+    usage: estimatedUsageObj,
   }), { status: 200, headers: { "Content-Type": "application/json" } });
 }
 
@@ -494,7 +495,7 @@ export class PerplexityWebExecutor extends BaseExecutor {
         headers: { ...SSE_HEADERS_NO_BUFFER },
       });
     } else {
-      finalResponse = await buildNonStreamingResponse(response.body, model, cid, created, parsed.history, parsed.currentMsg, signal);
+      finalResponse = await buildNonStreamingResponse(response.body, model, body, cid, created, parsed.history, parsed.currentMsg, signal);
     }
     return { response: finalResponse, url: PPLX_SSE_ENDPOINT, headers, transformedBody: pplxBody };
   }

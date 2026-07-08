@@ -55,16 +55,25 @@ function formatArg(arg) {
 
 function appendLine(line) {
   pruneExpiredLogs(false);
-  state.logs.push({ line, createdAt: Date.now() });
+  const entry = { line, createdAt: Date.now() };
+  state.logs.push(entry);
   const maxLines = CONSOLE_LOG_CONFIG.maxLines;
   if (state.logs.length > maxLines) {
     state.logs = state.logs.slice(-maxLines);
   }
-  state.emitter.emit("line", line);
+  state.emitter.emit("line", entry);
 }
 
 function getLogLines() {
-  return state.logs.map((entry) => entry.line);
+  return state.logs.map((entry) => typeof entry === "string" ? entry : entry.line);
+}
+
+function getLogEntries() {
+  const now = Date.now();
+  return state.logs.map((entry) => {
+    if (typeof entry === "string") return { line: entry, createdAt: now };
+    return { line: entry.line, createdAt: entry.createdAt };
+  });
 }
 
 function pruneExpiredLogs(emit = true) {
@@ -79,7 +88,7 @@ function pruneExpiredLogs(emit = true) {
 
   const removed = before - state.logs.length;
   if (removed > 0 && emit) {
-    state.emitter.emit("prune", getLogLines());
+    state.emitter.emit("prune", getLogEntries());
   }
   return removed;
 }
@@ -110,11 +119,16 @@ export function getConsoleLogs() {
   return getLogLines();
 }
 
+export function getConsoleLogEntries() {
+  pruneExpiredLogs(false);
+  return getLogEntries();
+}
+
 export function clearConsoleLogs() {
   const cutoff = Date.now() - CONSOLE_LOG_CONFIG.clearPreserveMs;
   state.logs = state.logs.filter((entry) => typeof entry !== "string" && entry.createdAt >= cutoff);
   if (state.logs.length > 0) {
-    state.emitter.emit("prune", getLogLines());
+    state.emitter.emit("prune", getLogEntries());
   } else {
     state.emitter.emit("clear");
   }

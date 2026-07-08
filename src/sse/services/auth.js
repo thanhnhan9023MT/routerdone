@@ -1,6 +1,6 @@
 ﻿import { getProviderConnections, validateApiKey, updateProviderConnection, getSettings } from "@/lib/localDb";
 import { resolveConnectionProxyConfig } from "@/lib/network/connectionProxy";
-import { formatRetryAfter, checkFallbackError, isModelLockActive, buildModelLockUpdate, getEarliestModelLockUntil, isBusyConcurrencyError, isPreflightTimeoutError, shouldLockConnectionForError, resolveConnectionCooldownMs, buildModelFailureBackoffUpdate, buildClearModelFailureUpdate, isRateLimitError, isProviderSelfHealError } from "open-sse/services/accountFallback.js";
+import { formatRetryAfter, checkFallbackError, isModelLockActive, buildModelLockUpdate, getEarliestModelLockUntil, isBusyConcurrencyError, isPreflightTimeoutError, shouldLockConnectionForError, resolveConnectionCooldownMs, buildModelFailureBackoffUpdate, buildClearModelFailureUpdate, isRateLimitError, isProviderSelfHealError, shouldDisableConnectionForError } from "open-sse/services/accountFallback.js";
 import { MAX_RATE_LIMIT_COOLDOWN_MS } from "open-sse/config/errorConfig.js";
 import { resolveProviderId, FREE_PROVIDERS } from "@/shared/constants/providers.js";
 import * as log from "../utils/logger.js";
@@ -40,6 +40,7 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
     ? excludeConnectionIds
     : (excludeConnectionIds ? new Set([excludeConnectionIds]) : new Set());
   const preferredConnectionId = options?.preferredConnectionId || null;
+  const lockOptions = { ignoreModelLocks: options?.ignoreModelLocks === true };
   // Acquire mutex to prevent race conditions
   const currentMutex = selectionMutex;
   let resolveMutex;
@@ -82,24 +83,24 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
     // Filter out model-locked and excluded connections
     const availableConnections = connections.filter(c => {
       if (excludeSet.has(c.id)) return false;
-      if (isModelLockActive(c, model)) return false;
+      if (isModelLockActive(c, model, lockOptions)) return false;
       return true;
     });
 
     log.debug("AUTH", `${provider} | available: ${availableConnections.length}/${connections.length}`);
     connections.forEach(c => {
       const excluded = excludeSet.has(c.id);
-      const locked = isModelLockActive(c, model);
+      const locked = isModelLockActive(c, model, lockOptions);
       if (excluded || locked) {
-        const lockUntil = getEarliestModelLockUntil(c);
+        const lockUntil = getEarliestModelLockUntil(c, lockOptions);
         log.debug("AUTH", `  → ${c.id?.slice(0, 8)} | ${excluded ? "excluded" : ""} ${locked ? `modelLocked(${model}) until ${formatConsoleTimeGmt7(lockUntil)}` : ""}`);
       }
     });
 
     if (availableConnections.length === 0) {
       // Find earliest lock expiry across all connections for retry timing
-      const lockedConns = connections.filter(c => isModelLockActive(c, model));
-      const expiries = lockedConns.map(c => getEarliestModelLockUntil(c)).filter(Boolean);
+      const lockedConns = connections.filter(c => isModelLockActive(c, model, lockOptions));
+      const expiries = lockedConns.map(c => getEarliestModelLockUntil(c, lockOptions)).filter(Boolean);
       const earliest = expiries.sort()[0] || null;
       if (earliest) {
         const earliestConn = lockedConns[0];
@@ -277,10 +278,9 @@ export async function markAccountUnavailable(connectionId, status, errorText, pr
         comboPreflightFailureAt: null,
       };
 
-  // 402 Payment Required: auto-disable the connection so it stops being
-  // selected for routing. A billing problem is not transient like a rate
-  // limit; the owner must fix payment and manually re-enable the account.
-  const paymentBlocked = status === 402;
+  // Billing/credit exhaustion: auto-disable the connection so it stops being
+  // selected for routing until the owner fixes payment and manually re-enables it.
+  const paymentBlocked = shouldDisableConnectionForError(status, reasonText);
   await updateProviderConnection(connectionId, {
     ...lockUpdate,
     ...failureUpdate,

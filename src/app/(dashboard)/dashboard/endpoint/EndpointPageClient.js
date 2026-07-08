@@ -5,6 +5,7 @@ import PropTypes from "prop-types";
 import { Card, Button, Input, Modal, CardSkeleton, Toggle, ConfirmModal } from "@/shared/components";
 import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
 import { getCurrentLocale, onLocaleChange } from "@/i18n/runtime";
+import KeyLimitModal from "./components/KeyLimitModal";
 import {
   WENYAN_LOCALES,
   TUNNEL_BENEFITS,
@@ -28,6 +29,7 @@ export default function APIPageClient({ machineId }) {
   const [newKeyName, setNewKeyName] = useState("");
   const [createdKey, setCreatedKey] = useState(null);
   const [confirmState, setConfirmState] = useState(null);
+  const [configKey, setConfigKey] = useState(null);
 
   const [requireApiKey, setRequireApiKey] = useState(false);
   const [requireLogin, setRequireLogin] = useState(true);
@@ -813,6 +815,30 @@ export default function APIPageClient({ machineId }) {
     }
   };
 
+  // Refresh local key rows after the KeyLimitModal saves (PUT or reset-usage).
+  const handleKeyConfigSaved = (updatedKey) => {
+    if (!updatedKey) return;
+    setKeys(prev => prev.map(k => k.id === updatedKey.id ? { ...k, ...updatedKey } : k));
+    setConfigKey((cur) => (cur && cur.id === updatedKey.id ? { ...cur, ...updatedKey } : cur));
+  };
+
+  // Per-key quota display helpers. Daily counter rolls over per local tz; when
+  // the cached dateKey is stale, effective usage reads as 0.
+  const quotaUsed = (key) => {
+    if (!key || key.limitType === "unlimited") return 0;
+    if (key.limitType === "total") return key.usedTokens || 0;
+    if (key.limitType === "daily") {
+      const today = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Saigon" });
+      return key.usedDailyDateKey === today ? (key.usedDailyTokens || 0) : 0;
+    }
+    return 0;
+  };
+  const quotaPct = (key) => {
+    const limit = key?.tokenLimit || 0;
+    if (!limit) return 0;
+    return Math.min(100, Math.round((quotaUsed(key) / limit) * 100));
+  };
+
   const maskKey = (fullKey) => {
     if (!fullKey || fullKey.length <= 10) return fullKey || "";
     return fullKey.slice(0, 6) + "•".repeat(fullKey.length - 10) + fullKey.slice(-4);
@@ -1186,6 +1212,25 @@ export default function APIPageClient({ machineId }) {
                   {key.isActive === false && (
                     <p className="text-xs text-orange-500 mt-1">Paused</p>
                   )}
+                  {key.limitType && key.limitType !== "unlimited" && (
+                    <p className="text-xs mt-1">
+                      <span className={`px-1.5 py-0.5 rounded ${quotaPct(key) >= 90 ? "bg-red-500/15 text-red-500" : quotaPct(key) >= 70 ? "bg-warning/15 text-warning" : "bg-primary/10 text-primary"}`}>
+                        {key.limitType === "daily" ? "Daily" : "Total"}: {(quotaUsed(key)).toLocaleString()}/{(key.tokenLimit || 0).toLocaleString()}
+                      </span>
+                      {key.allowedModels && key.allowedModels.type !== "all" && (
+                        <span className="ml-1 px-1.5 py-0.5 rounded bg-surface-2 text-text-muted">
+                          {key.allowedModels.type === "combo" ? "Combo" : "Model"}: {key.allowedModels.value}
+                        </span>
+                      )}
+                    </p>
+                  )}
+                  {key.limitType === "unlimited" && key.allowedModels && key.allowedModels.type !== "all" && (
+                    <p className="text-xs mt-1">
+                      <span className="px-1.5 py-0.5 rounded bg-surface-2 text-text-muted">
+                        {key.allowedModels.type === "combo" ? "Combo" : "Model"}: {key.allowedModels.value}
+                      </span>
+                    </p>
+                  )}
                 </div>
                 <div className="flex items-center gap-2">
                   <Toggle
@@ -1207,6 +1252,13 @@ export default function APIPageClient({ machineId }) {
                     }}
                     title={key.isActive ? "Pause key" : "Resume key"}
                   />
+                  <button
+                    onClick={() => setConfigKey(key)}
+                    className="p-2 hover:bg-black/5 dark:hover:bg-white/5 rounded text-text-muted hover:text-primary opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-all"
+                    title="Configure quota & model access"
+                  >
+                    <span className="material-symbols-outlined text-[18px]">tune</span>
+                  </button>
                   <button
                     onClick={() => handleDeleteKey(key.id)}
                     className="p-2 hover:bg-red-500/10 rounded text-red-500 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-all"
@@ -1665,6 +1717,16 @@ export default function APIPageClient({ machineId }) {
         title={confirmState?.title || "Confirm"}
         message={confirmState?.message}
         variant="danger"
+      />
+
+      {/* Per-key quota + model restriction. key prop forces a clean remount
+          when switching between keys so the form re-initializes from props. */}
+      <KeyLimitModal
+        key={configKey?.id || "none"}
+        isOpen={!!configKey}
+        onClose={() => setConfigKey(null)}
+        keyRecord={configKey}
+        onSaved={handleKeyConfigSaved}
       />
     </div>
   );

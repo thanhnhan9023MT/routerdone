@@ -29,3 +29,8 @@ export function modelStrip(model) {
 export function modelTargetFormat(model) {
   return model?.targetFormat || MODEL_DEFAULTS.targetFormat;
 }
+
+// Normalize model ID: convert dash-separated version to dot-separated (e.g. "claude-sonnet-4-5" → "claude-sonnet-4.5")
+export function normalizeModelId(modelId) {
+  return modelId?.replace(/(\d+)-(\d+)/g, "$1.$2") || modelId;
+}

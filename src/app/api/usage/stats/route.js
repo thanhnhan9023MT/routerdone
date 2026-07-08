@@ -6,7 +6,7 @@ const VALID_PERIODS = new Set(["today", "24h", "7d", "30d", "60d", "all"]);
 // Server-side TTL cache: usage stats don't change faster than this.
 // SSE handles real-time updates; this REST endpoint just needs to be fresh-ish.
 const CACHE_TTL_MS = 3000;
-const cache = new Map(); // period -> { data, ts }
+const cache = new Map(); // `${period}|${timeZone}` -> { data, ts }
 
 export const dynamic = "force-dynamic";
 
@@ -14,19 +14,21 @@ export async function GET(request) {
   try {
     const { searchParams } = new URL(request.url);
     const period = searchParams.get("period") || "7d";
+    const timeZone = searchParams.get("tz") || undefined;
 
     if (!VALID_PERIODS.has(period)) {
       return NextResponse.json({ error: "Invalid period" }, { status: 400 });
     }
 
     const now = Date.now();
-    const entry = cache.get(period);
+    const cacheKey = `${period}|${timeZone || "server"}`;
+    const entry = cache.get(cacheKey);
     if (entry && now - entry.ts < CACHE_TTL_MS) {
       return NextResponse.json(entry.data);
     }
 
-    const stats = await getUsageStats(period);
-    cache.set(period, { data: stats, ts: now });
+    const stats = await getUsageStats(period, timeZone);
+    cache.set(cacheKey, { data: stats, ts: now });
     return NextResponse.json(stats);
   } catch (error) {
     console.error("[API] Failed to get usage stats:", error);

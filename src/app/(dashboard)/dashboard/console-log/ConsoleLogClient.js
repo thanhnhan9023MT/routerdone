@@ -27,8 +27,50 @@ function colorLine(line) {
   return <span className={color}>{line}</span>;
 }
 
-const handleDownload = (logs) => {
-  const content = logs.join("\n");
+function getBrowserTimeZone() {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  } catch {
+    return "UTC";
+  }
+}
+
+function normalizeLogEntry(entry) {
+  if (typeof entry === "string") return { line: entry, createdAt: null };
+  if (!entry || typeof entry !== "object") return { line: String(entry ?? ""), createdAt: null };
+  return {
+    line: typeof entry.line === "string" ? entry.line : String(entry.line ?? ""),
+    createdAt: Number.isFinite(Number(entry.createdAt)) ? Number(entry.createdAt) : null,
+  };
+}
+
+function formatClock(createdAt, timeZone) {
+  if (!createdAt) return null;
+  try {
+    const parts = new Intl.DateTimeFormat("en-GB", {
+      timeZone,
+      hour12: false,
+      hourCycle: "h23",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    }).formatToParts(new Date(createdAt));
+    const get = (type) => parts.find((part) => part.type === type)?.value;
+    return `${get("hour")}:${get("minute")}:${get("second")}`;
+  } catch {
+    return null;
+  }
+}
+
+function formatDisplayLine(entry, timeZone) {
+  const normalized = normalizeLogEntry(entry);
+  const localClock = formatClock(normalized.createdAt, timeZone);
+  if (!localClock) return normalized.line;
+  return normalized.line.replace(/^\[\d{2}:\d{2}:\d{2}\]/, `[${localClock}]`);
+}
+
+const handleDownload = (logs, timeZone) => {
+  const content = logs.map((line) => formatDisplayLine(line, timeZone)).join("\n");
   const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
   const blob = new Blob([content ? `${content}\n` : ""], { type: "text/plain;charset=utf-8" });
   const url = URL.createObjectURL(blob);
@@ -43,6 +85,7 @@ const handleDownload = (logs) => {
 
 export default function ConsoleLogClient() {
   const [logs, setLogs] = useState([]);
+  const [timeZone] = useState(getBrowserTimeZone);
   const [connected, setConnected] = useState(false);
   const [retentionMs, setRetentionMs] = useState(String(CONSOLE_LOG_CONFIG.defaultRetentionMs));
   const [savingRetention, setSavingRetention] = useState(false);
@@ -95,16 +138,16 @@ export default function ConsoleLogClient() {
     es.onmessage = (e) => {
       const msg = JSON.parse(e.data);
       if (msg.type === "init") {
-        setLogs(msg.logs.slice(-CONSOLE_LOG_CONFIG.maxLines));
+        setLogs((msg.logs || []).map(normalizeLogEntry).slice(-CONSOLE_LOG_CONFIG.maxLines));
       } else if (msg.type === "line") {
         setLogs((prev) => {
-          const next = [...prev, msg.line];
+          const next = [...prev, normalizeLogEntry(msg.entry ?? msg.line)];
           return next.length > CONSOLE_LOG_CONFIG.maxLines ? next.slice(-CONSOLE_LOG_CONFIG.maxLines) : next;
         });
       } else if (msg.type === "clear") {
         setLogs([]);
       } else if (msg.type === "sync") {
-        setLogs(msg.logs.slice(-CONSOLE_LOG_CONFIG.maxLines));
+        setLogs((msg.logs || []).map(normalizeLogEntry).slice(-CONSOLE_LOG_CONFIG.maxLines));
       }
     };
 
@@ -141,7 +184,7 @@ export default function ConsoleLogClient() {
               <span className="material-symbols-outlined pointer-events-none absolute right-2 text-[18px] text-text-muted">expand_more</span>
             </span>
           </label>
-          <Button size="sm" variant="outline" icon="download" onClick={() => handleDownload(logs)} disabled={logs.length === 0}>
+          <Button size="sm" variant="outline" icon="download" onClick={() => handleDownload(logs, timeZone)} disabled={logs.length === 0}>
             Download
           </Button>
           <Button size="sm" variant="outline" icon="delete" onClick={handleClear}>
@@ -157,7 +200,7 @@ export default function ConsoleLogClient() {
           ) : (
             <div className="space-y-0.5">
               {logs.map((line, i) => (
-                <div key={i}>{colorLine(line)}</div>
+                <div key={i}>{colorLine(formatDisplayLine(line, timeZone))}</div>
               ))}
             </div>
           )}

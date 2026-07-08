@@ -29,7 +29,9 @@ export {
 
 // API keys
 export {
-  getApiKeys, getApiKeyById, createApiKey, updateApiKey, deleteApiKey, validateApiKey,
+  getApiKeys, getApiKeyById, getApiKeyByRawKey,
+  createApiKey, updateApiKey, deleteApiKey, validateApiKey,
+  incrementApiKeyUsage, resetApiKeyUsage,
 } from "./repos/apiKeysRepo.js";
 
 // Combos
@@ -77,7 +79,7 @@ export async function exportDb() {
     providerConnections: db.all(`SELECT * FROM providerConnections`).map((r) => ({ ...parseJson(r.data, {}), id: r.id, provider: r.provider, authType: r.authType, name: r.name, email: r.email, priority: r.priority, isActive: r.isActive === 1, createdAt: r.createdAt, updatedAt: r.updatedAt })),
     providerNodes: db.all(`SELECT * FROM providerNodes`).map((r) => ({ ...parseJson(r.data, {}), id: r.id, type: r.type, name: r.name, createdAt: r.createdAt, updatedAt: r.updatedAt })),
     proxyPools: db.all(`SELECT * FROM proxyPools`).map((r) => ({ ...parseJson(r.data, {}), id: r.id, isActive: r.isActive === 1, testStatus: r.testStatus, createdAt: r.createdAt, updatedAt: r.updatedAt })),
-    apiKeys: db.all(`SELECT * FROM apiKeys`).map((r) => ({ id: r.id, key: r.key, name: r.name, machineId: r.machineId, isActive: r.isActive === 1, createdAt: r.createdAt })),
+    apiKeys: db.all(`SELECT * FROM apiKeys`).map((r) => ({ id: r.id, key: r.key, name: r.name, machineId: r.machineId, isActive: r.isActive === 1, createdAt: r.createdAt, limitType: r.limitType ?? "unlimited", tokenLimit: r.tokenLimit ?? 0, usedTokens: r.usedTokens ?? 0, usedDailyTokens: r.usedDailyTokens ?? 0, usedDailyDateKey: r.usedDailyDateKey ?? null, allowedModels: parseJson(r.allowedModels, { type: "all", value: null }) })),
     combos: db.all(`SELECT * FROM combos`).map((r) => ({ id: r.id, name: r.name, kind: r.kind, models: parseJson(r.models, []), createdAt: r.createdAt, updatedAt: r.updatedAt })),
     modelAliases: {},
     customModels: [],
@@ -137,8 +139,16 @@ export async function importDb(payload) {
     }
     for (const k of payload.apiKeys || []) {
       db.run(
-        `INSERT OR REPLACE INTO apiKeys(id, key, name, machineId, isActive, createdAt) VALUES(?, ?, ?, ?, ?, ?)`,
-        [k.id, k.key, k.name || null, k.machineId || null, k.isActive === false ? 0 : 1, k.createdAt || new Date().toISOString()]
+        `INSERT OR REPLACE INTO apiKeys(id, key, name, machineId, isActive, createdAt, limitType, tokenLimit, usedTokens, usedDailyTokens, usedDailyDateKey, allowedModels) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          k.id, k.key, k.name || null, k.machineId || null,
+          k.isActive === false ? 0 : 1, k.createdAt || new Date().toISOString(),
+          k.limitType || "unlimited", typeof k.tokenLimit === "number" ? k.tokenLimit : 0,
+          typeof k.usedTokens === "number" ? k.usedTokens : 0,
+          typeof k.usedDailyTokens === "number" ? k.usedDailyTokens : 0,
+          k.usedDailyDateKey || null,
+          stringifyJson(k.allowedModels || { type: "all", value: null }),
+        ]
       );
     }
     for (const c of payload.combos || []) {

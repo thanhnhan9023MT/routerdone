@@ -50,6 +50,7 @@ export default {
     { id: "glm-5", name: "GLM 5" },
     { id: "glm-4.7", name: "GLM 4.7" },
     { id: "glm-4.6v", name: "GLM 4.6V (Vision)" },
+    { id: "glm-5v-turbo", name: "GLM 5V Turbo (Vision)" },
   ],
   features: {
     usage: true,

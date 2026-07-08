@@ -20,9 +20,19 @@ const PREFLIGHT_TIMEOUT_TEXT = [
   "upstream headers timeout",
 ];
 
+const CLIENT_PAYLOAD_ERROR_RULES = [
+  (text) => text.includes("image_url") && text.includes("expected a valid url"),
+];
+
 function normalizeErrorText(errorText) {
   if (!errorText) return "";
   return (typeof errorText === "string" ? errorText : JSON.stringify(errorText)).toLowerCase();
+}
+
+export function isClientPayloadError(status, errorText) {
+  if (Number(status) !== 400) return false;
+  const lowerError = normalizeErrorText(errorText);
+  return !!lowerError && CLIENT_PAYLOAD_ERROR_RULES.some(rule => rule(lowerError));
 }
 
 /**
@@ -47,6 +57,10 @@ export function getQuotaCooldown(backoffLevel = 0) {
  */
 export function checkFallbackError(status, errorText, backoffLevel = 0) {
   const lowerError = normalizeErrorText(errorText);
+
+  if (isClientPayloadError(status, lowerError)) {
+    return { shouldFallback: false, cooldownMs: 0, clientError: true };
+  }
 
   for (const rule of ERROR_RULES) {
     // Text-based rule: match substring in error message
@@ -93,6 +107,20 @@ export function isRateLimitError(status, errorText) {
     if (rule.status && rule.status === status) return true;
   }
   return false;
+}
+
+export function shouldDisableConnectionForError(status, errorText) {
+  if (Number(status) === 402) return true;
+  if (Number(status) !== 403) return false;
+
+  const lowerError = normalizeErrorText(errorText);
+  if (!lowerError) return false;
+  return (
+    lowerError.includes("hết credit") ||
+    lowerError.includes("het credit") ||
+    (lowerError.includes("credit") && lowerError.includes("pay-as-you")) ||
+    (lowerError.includes("insufficient") && lowerError.includes("credit"))
+  );
 }
 
 export function isBusyConcurrencyError(errorText) {
@@ -184,10 +212,15 @@ export function getModelLockKey(model) {
 /**
  * Check if a model lock on a connection is still active.
  * Reads flat field `modelLock_${model}` (or `modelLock___all` when model=null).
+ * Combo routing may ignore per-model DB locks because combo has its own
+ * soft cooldown/order; account-level locks still apply.
  */
-export function isModelLockActive(connection, model) {
+export function isModelLockActive(connection, model, options = {}) {
+  const allExpiry = connection?.[MODEL_LOCK_ALL];
+  if (allExpiry && new Date(allExpiry).getTime() > Date.now()) return true;
+  if (options?.ignoreModelLocks) return false;
   const key = getModelLockKey(model);
-  const expiry = connection[key] || connection[MODEL_LOCK_ALL];
+  const expiry = connection?.[key];
   if (!expiry) return false;
   return new Date(expiry).getTime() > Date.now();
 }
@@ -196,12 +229,13 @@ export function isModelLockActive(connection, model) {
  * Get earliest active model lock expiry across all modelLock_* fields.
  * Used for UI cooldown display.
  */
-export function getEarliestModelLockUntil(connection) {
+export function getEarliestModelLockUntil(connection, options = {}) {
   if (!connection) return null;
   let earliest = null;
   const now = Date.now();
   for (const [key, val] of Object.entries(connection)) {
     if (!key.startsWith(MODEL_LOCK_PREFIX) || !val) continue;
+    if (options?.ignoreModelLocks && key !== MODEL_LOCK_ALL) continue;
     const t = new Date(val).getTime();
     if (t <= now) continue;
     if (!earliest || t < earliest) earliest = t;

@@ -5,11 +5,11 @@ import {
   markAccountUnavailable,
   clearAccountError,
   extractApiKey,
-  isValidApiKey,
 } from "../services/auth.js";
 import { cacheClaudeHeaders } from "open-sse/utils/claudeHeaderCache.js";
-import { getSettings } from "@/lib/localDb";
+import { getSettings, getApiKeyByRawKey } from "@/lib/localDb";
 import { getModelInfo, getComboModels } from "../services/model.js";
+import { checkModelAllowed, checkKeyQuota } from "../services/keyPolicy.js";
 import { handleChatCore } from "open-sse/handlers/chatCore.js";
 import { DEFAULT_HEADROOM_URL } from "@/lib/headroom/detect";
 import { errorResponse, unavailableResponse } from "open-sse/utils/error.js";
@@ -80,14 +80,20 @@ export async function handleChat(request, clientRawRequest = null) {
     log.debug("AUTH", "No API key provided (local mode)");
   }
 
-  // Enforce API key if enabled in settings
+  // Enforce API key if enabled in settings. Also load the full key record
+  // (when a key is present) so the per-key model-restriction and quota
+  // policies below have everything they need in one DB hit.
   const settings = await getSettings();
+  let keyRecord = null;
+  if (apiKey) {
+    keyRecord = await getApiKeyByRawKey(apiKey).catch(() => null);
+  }
   if (settings.requireApiKey) {
     if (!apiKey) {
       log.warn("AUTH", "Missing API key (requireApiKey=true)");
       return errorResponse(HTTP_STATUS.UNAUTHORIZED, "Missing API key");
     }
-    const valid = await isValidApiKey(apiKey);
+    const valid = keyRecord && keyRecord.isActive;
     if (!valid) {
       log.warn("AUTH", "Invalid API key (requireApiKey=true)");
       return errorResponse(HTTP_STATUS.UNAUTHORIZED, "Invalid API key");
@@ -111,6 +117,41 @@ export async function handleChat(request, clientRawRequest = null) {
     log.info("CHAT", `Redirecting model ${modelStr} -> ${redirectedModel}`);
     modelStr = redirectedModel;
     body = { ...body, model: redirectedModel };
+  }
+
+  // Per-API-key policy gate (resale / donate quota). modelStr is now the
+  // post-redirect effective requested name — the right value to match a
+  // "specific model" or "specific combo" restriction against.
+  if (keyRecord) {
+    const modelDecision = await checkModelAllowed(modelStr, keyRecord);
+    if (!modelDecision.allowed) {
+      log.warn("KEY-POLICY", `Model "${modelStr}" denied for key ${log.maskKey(apiKey)}: ${modelDecision.detail}`);
+      return new Response(JSON.stringify({
+        error: {
+          message: modelDecision.detail || "This API key is not allowed to use the requested model.",
+          type: "permission_denied",
+          code: modelDecision.reason || "model_not_allowed",
+        },
+      }), { status: HTTP_STATUS.FORBIDDEN, headers: { "Content-Type": "application/json" } });
+    }
+
+    const quotaDecision = checkKeyQuota(keyRecord, { body, modelStr });
+    if (!quotaDecision.allowed) {
+      const resetTxt = quotaDecision.resetAt ? ` Resets at ${new Date(quotaDecision.resetAt).toISOString()}.` : "";
+      const msg = `You exceeded your current API key token quota (used ${quotaDecision.used} of ${quotaDecision.limit} tokens, this request needs ~${quotaDecision.estimatedInput} more).${resetTxt}`;
+      log.warn("KEY-POLICY", `Quota denied for key ${log.maskKey(apiKey)}: used=${quotaDecision.used} limit=${quotaDecision.limit} estInput=${quotaDecision.estimatedInput}`);
+      return new Response(JSON.stringify({
+        error: {
+          message: msg,
+          type: "insufficient_quota",
+          code: quotaDecision.reason || "quota_exceeded",
+          used: quotaDecision.used,
+          limit: quotaDecision.limit,
+          estimated_input: quotaDecision.estimatedInput,
+          ...(quotaDecision.resetAt ? { reset_at: quotaDecision.resetAt } : {}),
+        },
+      }), { status: HTTP_STATUS.RATE_LIMITED, headers: { "Content-Type": "application/json" } });
+    }
   }
 
   // Check if model is a combo (has multiple models with fallback)
@@ -248,9 +289,11 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
   const excludeConnectionIds = new Set();
   let lastError = null;
   let lastStatus = null;
+  const routeMode = attemptContext.routeMode || (attemptContext.comboName ? "combo" : "direct");
+  const ignoreModelLocks = routeMode === "combo" || routeMode === "fusion";
 
   while (true) {
-    const credentials = await getProviderCredentials(provider, excludeConnectionIds, model);
+    const credentials = await getProviderCredentials(provider, excludeConnectionIds, model, { ignoreModelLocks });
 
     // All accounts unavailable
     if (!credentials || credentials.allRateLimited) {
@@ -296,7 +339,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       attemptModel: attemptContext.attemptModel || modelStr,
       attemptIndex: attemptContext.attemptIndex || 1,
       attemptTotal: attemptContext.attemptTotal || 1,
-      routeMode: attemptContext.routeMode || (attemptContext.comboName ? "combo" : "direct"),
+      routeMode,
       fusionRole: attemptContext.fusionRole || null,
       actualProvider: provider,
       actualModel: model,
@@ -325,7 +368,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       contextGuardHardCapTokens: chatSettings.contextGuardHardCapTokens,
       providerThinking,
       routeInfo,
-      streamTimeoutPolicy: resolveRoutePolicy(attemptContext.routeMode || (attemptContext.comboName ? "combo" : "direct"), { stream: attemptContext.streamTimeoutPolicy, streamPreflightTimeoutMs: attemptContext.streamPreflightTimeoutMs }).stream,
+      streamTimeoutPolicy: resolveRoutePolicy(routeMode, { stream: attemptContext.streamTimeoutPolicy, streamPreflightTimeoutMs: attemptContext.streamPreflightTimeoutMs }).stream,
       // Detect source format by endpoint + body
       sourceFormatOverride: request?.url ? detectFormatByEndpoint(new URL(request.url).pathname, body) : null,
       onCredentialsRefreshed: async (newCreds) => {

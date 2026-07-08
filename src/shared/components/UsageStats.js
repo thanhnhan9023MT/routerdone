@@ -27,6 +27,20 @@ const DEFAULT_LIVE = {
 const USAGE_STATS_CACHE_PREFIX = "routerdone:usage-stats:";
 const USAGE_PROVIDERS_CACHE_KEY = "routerdone:usage-providers:v1";
 
+function getBrowserTimeZone() {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || "";
+  } catch {
+    return "";
+  }
+}
+
+function buildUsageUrl(path, period, timeZone) {
+  const params = new URLSearchParams({ period });
+  if (timeZone) params.set("tz", timeZone);
+  return `${path}?${params.toString()}`;
+}
+
 function readCache(key) {
   if (typeof window === "undefined") return null;
   try {
@@ -264,10 +278,15 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
   const hasLoadedStats = useRef(false);
   const period = periodProp ?? periodLocal;
   const setPeriod = setPeriodProp ?? setPeriodLocal;
+  const [timeZone, setTimeZone] = useState("");
 
+
+  useEffect(() => {
+    setTimeZone(getBrowserTimeZone());
+  }, []);
   // Hydrate last rendered snapshot immediately; refresh happens in background.
   useEffect(() => {
-    const cached = readCache(`${USAGE_STATS_CACHE_PREFIX}${period}`);
+    const cached = readCache(`${USAGE_STATS_CACHE_PREFIX}${period}:${timeZone || "server"}`);
     if (cached?.data) {
       hasLoadedStats.current = true;
       setStats(cached.data);
@@ -279,7 +298,7 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
       });
       setLoading(false);
     }
-  }, [period]);
+  }, [period, timeZone]);
 
   // Defer heavy component mounts (ReactFlow, recharts, table) until after first paint
   useEffect(() => {
@@ -332,7 +351,7 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
   // Fetch filtered stats via REST when period changes
   useEffect(() => {
     // First load: show full spinner; subsequent: show subtle fetching indicator
-    const cached = readCache(`${USAGE_STATS_CACHE_PREFIX}${period}`);
+    const cached = readCache(`${USAGE_STATS_CACHE_PREFIX}${period}:${timeZone || "server"}`);
     if (isInitialLoad.current) {
       isInitialLoad.current = false;
       setLoading(!cached?.data);
@@ -340,12 +359,12 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
       setFetching(true);
     }
 
-    fetch(`/api/usage/stats?period=${period}`)
+    fetch(buildUsageUrl("/api/usage/stats", period, timeZone))
       .then((r) => r.ok ? r.json() : null)
       .then((data) => {
         if (data) {
           hasLoadedStats.current = true;
-          writeCache(`${USAGE_STATS_CACHE_PREFIX}${period}`, data);
+          writeCache(`${USAGE_STATS_CACHE_PREFIX}${period}:${timeZone || "server"}`, data);
           setStats(data);
           setLive({
             activeRequests: data.activeRequests || [],
@@ -360,11 +379,13 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
         setLoading(false);
         setFetching(false);
       });
-  }, [period]);
+  }, [period, timeZone]);
 
   // SSE connection - lightweight live panel only; heavy stats stay on REST cache
   useEffect(() => {
-    const es = new EventSource("/api/usage/stream");
+    const params = new URLSearchParams();
+    if (timeZone) params.set("tz", timeZone);
+    const es = new EventSource(`/api/usage/stream${params.size ? `?${params.toString()}` : ""}`);
 
     es.onmessage = (e) => {
       try {
@@ -384,23 +405,23 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
     es.onerror = () => setLoading(false);
 
     return () => es.close();
-  }, []);
+  }, [timeZone]);
 
   // Periodic REST refresh so table stays fresh without SSE-driven recompute
   useEffect(() => {
     if (!hasLoadedStats.current) return;
     const timer = setInterval(() => {
-      fetch(`/api/usage/stats?period=${period}`)
+      fetch(buildUsageUrl("/api/usage/stats", period, timeZone))
         .then((r) => r.ok ? r.json() : null)
         .then((data) => {
           if (!data) return;
-          writeCache(`${USAGE_STATS_CACHE_PREFIX}${period}`, data);
+          writeCache(`${USAGE_STATS_CACHE_PREFIX}${period}:${timeZone || "server"}`, data);
           setStats(data);
         })
         .catch(() => {});
     }, 10000);
     return () => clearInterval(timer);
-  }, [period]);
+  }, [period, timeZone]);
 
   const toggleSort = useCallback((tableType, field) => {
     const params = new URLSearchParams(searchParams.toString());

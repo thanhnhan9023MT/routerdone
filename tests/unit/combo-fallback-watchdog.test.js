@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 
 import { handleComboChat, getRotatedModels, resetComboRotation, resetComboCooldowns, getComboCooldownState } from "../../open-sse/services/combo.js";
 import { parseResetAfterText, parseRetryAfterHeader } from "../../open-sse/utils/error.js";
@@ -149,6 +149,42 @@ describe("adaptive combo fallback", () => {
     expect(res.ok).toBe(true);
   });
 
+  it("arms soft cooldown from fallback errors without relying on auth DB locks", async () => {
+    const firstTried = [];
+    const first = await handleComboChat({
+      body: { model: "combo", messages: [] },
+      models: ["p/a", "p/b"],
+      comboName: "combo",
+      comboRetryAttempts: 0,
+      comboRetryDelayMs: 0,
+      log,
+      handleSingleModel: async (_body, model) => {
+        firstTried.push(model);
+        if (model === "p/a") return new Response(JSON.stringify({ error: { message: "bad gateway" } }), { status: 502 });
+        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      },
+    });
+    expect(first.ok).toBe(true);
+    expect(firstTried).toEqual(["p/a", "p/b"]);
+    expect(getComboCooldownState("p/a").failureCount).toBe(1);
+
+    const secondTried = [];
+    const second = await handleComboChat({
+      body: { model: "combo", messages: [] },
+      models: ["p/a", "p/b"],
+      comboName: "combo",
+      comboRetryAttempts: 0,
+      comboRetryDelayMs: 0,
+      log,
+      handleSingleModel: async (_body, model) => {
+        secondTried.push(model);
+        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      },
+    });
+    expect(second.ok).toBe(true);
+    expect(secondTried).toEqual(["p/b"]);
+  });
+
   it("escalates the cooldown exponentially on consecutive failures, capped", async () => {
     const preflightFail = async () => new Response(
       JSON.stringify({ error: { message: "upstream first productive timeout" } }),
@@ -224,6 +260,38 @@ describe("adaptive combo fallback", () => {
     expect(after.remainingMs).toBeGreaterThan(25_000);
     expect(after.remainingMs).toBeLessThanOrEqual(30_000);
   });
+  it("resets stale combo backoff after the cooldown window expires", async () => {
+    vi.useFakeTimers();
+    try {
+      const preflightFail = async () => new Response(
+        JSON.stringify({ error: { message: "upstream first productive timeout" } }),
+        { status: 502 },
+      );
+      const arm = () => handleComboChat({
+        body: { model: "combo", messages: [] },
+        models: ["p/a"],
+        comboName: "combo",
+        comboRetryAttempts: 0,
+        comboRetryDelayMs: 0,
+        log,
+        handleSingleModel: preflightFail,
+      });
+
+      await arm();
+      vi.advanceTimersByTime(29_000);
+      await arm();
+      expect(getComboCooldownState("p/a").failureCount).toBe(2);
+
+      vi.advanceTimersByTime(61_000);
+      await arm();
+      const after = getComboCooldownState("p/a");
+      expect(after.failureCount).toBe(1);
+      expect(after.remainingMs).toBeGreaterThan(25_000);
+      expect(after.remainingMs).toBeLessThanOrEqual(30_000);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
   it("deprioritizes auth-locked combo models and resets after success", async () => {
     const authLocked = () => new Response(
       JSON.stringify({ error: { message: "all accounts locked", comboCooldownReason: "auth_model_locked" } }),
@@ -237,7 +305,7 @@ describe("adaptive combo fallback", () => {
       comboName: "combo",
       comboRetryAttempts: 0,
       comboRetryDelayMs: 0,
-      log,
+      log: { info: () => {}, warn: () => {}, debug: () => {} },
       handleSingleModel: async (_body, model) => {
         firstTried.push(model);
         if (model === "p/a") return authLocked();
@@ -391,8 +459,40 @@ describe("productive stream watchdog", () => {
     expect(isProductiveStreamChunk({ usage: { prompt_tokens: 1, completion_tokens: 0 } })).toBe(false);
   });
 
+  it("honors route policy for initial stream preflight", async () => {
+    let pullCount = 0;
+    const res = await guardInitialStream(new Response(new ReadableStream({
+      pull(controller) {
+        pullCount += 1;
+        if (pullCount === 1) {
+          controller.enqueue(new TextEncoder().encode("data: {\"id\":\"x\",\"choices\":[{\"delta\":{\"role\":\"assistant\"}}]}\n\n"));
+        }
+      }
+    }), { headers: { "Content-Type": "text/event-stream" } }), {
+      targetFormat: null, log, provider: "p", model: "m",
+      policy: { firstByteTimeoutMs: 5, firstProductiveTimeoutMs: 20, totalBudgetMs: 60 },
+    });
+    expect(res.error).toMatch(/productive timeout \(1s\)/);
+  }, 10000);
   it("direct default timeout is longer than combo default timeout", () => {
     expect(resolveRoutePolicy("direct").stream.firstProductiveTimeoutMs).toBeGreaterThan(resolveRoutePolicy("combo").stream.firstProductiveTimeoutMs);
+  });
+
+  it("extends combo preflight for high-effort reasoning models", async () => {
+    const seen = [];
+    await handleComboChat({
+      body: { model: "combo", messages: [], reasoning_effort: "xhigh" },
+      models: ["sk/claude-opus-4.8-thinking"],
+      comboName: "combo",
+      comboRetryAttempts: 0,
+      log: { info: () => {}, warn: () => {}, debug: () => {} },
+      handleSingleModel: async (_body, _model, ctx) => {
+        seen.push(ctx.streamTimeoutPolicy.firstProductiveTimeoutMs);
+        return new Response(JSON.stringify({ error: { message: "bad gateway" } }), { status: 502 });
+      },
+    });
+    expect(seen[0]).toBeGreaterThan(resolveRoutePolicy("combo").stream.firstProductiveTimeoutMs);
+    expect(seen[0]).toBe(45_000);
   });
 });
 

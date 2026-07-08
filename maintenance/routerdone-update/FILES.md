@@ -21,7 +21,7 @@ Danh sach file lien quan den ban RouterDone public, nhom theo chuc nang.
 | File | Trach nhiem |
 |------|-------------|
 | `patches/routerdone-custom.patch` | Patch chinh: brand + tuy chinh |
-| `patches/features/*.patch` | 16 feature patches (xem PATCH_ORDER.md) |
+| `patches/features/*.patch` | 23 feature patches (xem PATCH_ORDER.md) |
 | `patches/features/README.md` | Huong dan apply feature patches |
 
 ## Public Install
@@ -34,6 +34,8 @@ Danh sach file lien quan den ban RouterDone public, nhom theo chuc nang.
 | `captain-definition` | CapRover/Dokploy Dockerfile pointer |
 | `.env.example` | Env template (required + optional vars) |
 | `start.sh` | Quick Docker run script |
+| `install.ps1` | Windows one-line PowerShell installer |
+| `install.sh` | Linux/macOS one-line installer |
 | `.gitignore` | Git ignore (data, logs, .next, node_modules, .env) |
 | `.dockerignore` | Docker build context ignore |
 

@@ -8,6 +8,7 @@ import { isImmediateFallbackStatus, isRetryableTransientStatus, resolveRoutePoli
 import { getCapabilitiesForModel } from "../providers/capabilities.js";
 import { extractTextContent } from "../translator/formats/gemini.js";
 import { MODEL_FAILURE_BACKOFF_MAX_MS } from "../config/errorConfig.js";
+import { COMBO_REASONING_STREAM_FIRST_PRODUCTIVE_TIMEOUT_MS } from "../config/runtimeConfig.js";
 
 // Hard capabilities = input modalities; missing one drops request data (e.g. image
 // stripped). Must be prioritized. Soft (e.g. search) only degrades a feature.
@@ -31,6 +32,23 @@ const consoleTimeFormatter = new Intl.DateTimeFormat("sv-SE", {
   hour12: false,
 });
 
+function isSlowReasoningAttempt(body, modelStr) {
+  const effort = String(body?.reasoning_effort || body?.reasoning?.effort || "").toLowerCase();
+  const model = String(modelStr || "").toLowerCase();
+  return ["high", "xhigh"].includes(effort) || /(?:thinking|reasoning|xhigh)/i.test(model);
+}
+
+function withModelStreamPolicy(baseStreamPolicy, body, modelStr) {
+  if (!isSlowReasoningAttempt(body, modelStr)) return baseStreamPolicy;
+  return {
+    ...baseStreamPolicy,
+    firstProductiveTimeoutMs: Math.max(
+      baseStreamPolicy?.firstProductiveTimeoutMs || 0,
+      COMBO_REASONING_STREAM_FIRST_PRODUCTIVE_TIMEOUT_MS,
+    ),
+  };
+}
+
 function formatConsoleTimeGmt7(value) {
   if (!value) return value;
   const date = new Date(value);
@@ -47,23 +65,28 @@ function resolveComboModelCooldownMs() {
 function getComboCooldownUntil(modelStr) {
   const now = Date.now();
   for (const [key, until] of comboModelCooldowns) {
-    if (!until || until <= now) comboModelCooldowns.delete(key);
+    if (!until || until <= now) {
+      comboModelCooldowns.delete(key);
+      comboModelFailures.delete(key);
+    }
   }
   return comboModelCooldowns.get(modelStr) || 0;
 }
 
 // Per-model consecutive-failure counter drives an exponential backoff so a
-// chronically dead model is not re-probed every base window. Cooldown =
-// base * 2^(n-1), capped at MODEL_FAILURE_BACKOFF_MAX_MS. The counter persists
-// across cooldown expiry and is only cleared by a successful (2xx) call to that
-// model, so repeated failures keep escalating until the model recovers.
+// chronically dead model is not re-probed repeatedly inside one active cooldown
+// window. Once that window naturally expires, the next failure starts fresh at
+// the base window; otherwise recovered high-priority models can stay sunk behind
+// lower-priority fallbacks without ever getting a successful reset.
 function markComboCooldown(modelStr) {
   const baseMs = resolveComboModelCooldownMs();
   if (baseMs <= 0) return 0;
-  const nextCount = (comboModelFailures.get(modelStr) || 0) + 1;
+  const now = Date.now();
+  const prevUntil = comboModelCooldowns.get(modelStr) || 0;
+  const nextCount = prevUntil > now ? (comboModelFailures.get(modelStr) || 0) + 1 : 1;
   comboModelFailures.set(modelStr, nextCount);
   const backoffMs = Math.min(baseMs * Math.pow(2, nextCount - 1), MODEL_FAILURE_BACKOFF_MAX_MS);
-  const until = Date.now() + backoffMs;
+  const until = now + backoffMs;
   comboModelCooldowns.set(modelStr, until);
   return until;
 }
@@ -402,6 +425,7 @@ export async function handleComboChat({ body, models, handleSingleModel, log, co
       break;
     }
     const modelStr = rotatedModels[i];
+    const modelStreamPolicy = withModelStreamPolicy(policy.stream, body, modelStr);
     summary.tried++;
     log.info("COMBO", `${comboLogPrefix} | Trying model ${i + 1}/${rotatedModels.length}: ${modelStr}`);
 
@@ -418,8 +442,8 @@ export async function handleComboChat({ body, models, handleSingleModel, log, co
           attemptIndex: i + 1,
           attemptTotal: rotatedModels.length,
           routeMode: "combo",
-          streamTimeoutPolicy: policy.stream,
-          streamPreflightTimeoutMs: policy.stream.firstProductiveTimeoutMs,
+          streamTimeoutPolicy: modelStreamPolicy,
+          streamPreflightTimeoutMs: modelStreamPolicy.firstProductiveTimeoutMs,
         });
 
         if (result.ok || isImmediateFallbackStatus(result.status) || !isTransientComboStatus(result.status) || attempt >= retryAttempts) {
@@ -428,7 +452,7 @@ export async function handleComboChat({ body, models, handleSingleModel, log, co
 
         attempt++;
         const remainingMs = totalDeadline - Date.now();
-        if (remainingMs <= retryDelayMs + policy.stream.firstProductiveTimeoutMs) break;
+        if (remainingMs <= retryDelayMs + modelStreamPolicy.firstProductiveTimeoutMs) break;
         log.info("COMBO", `${comboLogPrefix} | Model ${modelStr} transient ${result.status}, retry ${attempt}/${retryAttempts} after ${retryDelayMs / 1000}s`);
         if (retryDelayMs > 0) await new Promise(r => setTimeout(r, Math.min(retryDelayMs, Math.max(0, totalDeadline - Date.now()))));
       }
@@ -465,20 +489,6 @@ export async function handleComboChat({ body, models, handleSingleModel, log, co
         try { errorText = JSON.stringify(errorText); } catch { errorText = String(errorText); }
       }
 
-      if (isPreflightTimeoutText(errorText)) {
-        const cooldownUntil = markComboCooldown(modelStr);
-        if (cooldownUntil) {
-          log.warn("COMBO", `${comboLogPrefix} | cooldown model=${modelStr} until=${formatConsoleTimeGmt7(cooldownUntil)} reason=preflight_timeout`, { status: result.status });
-        }
-      }
-
-      if (isAuthLockedComboError(errorBody)) {
-        const cooldownUntil = markComboCooldown(modelStr);
-        if (cooldownUntil) {
-          log.warn("COMBO", `${comboLogPrefix} | cooldown model=${modelStr} until=${formatConsoleTimeGmt7(cooldownUntil)} reason=auth_model_locked`, { status: result.status });
-        }
-      }
-
       // Check if should fallback to next model
       const { shouldFallback, cooldownMs } = checkFallbackError(result.status, errorText);
 
@@ -487,6 +497,16 @@ export async function handleComboChat({ body, models, handleSingleModel, log, co
         logSummary(`stopped=${modelStr} | last_status=${result.status}`);
         log.warn("COMBO", `${comboLogPrefix} | Model ${modelStr} failed (no fallback)`, { status: result.status });
         return result;
+      }
+
+      const cooldownReason = isAuthLockedComboError(errorBody)
+        ? "auth_model_locked"
+        : isPreflightTimeoutText(errorText)
+          ? "preflight_timeout"
+          : "fallback_error";
+      const cooldownUntil = markComboCooldown(modelStr);
+      if (cooldownUntil) {
+        log.warn("COMBO", `${comboLogPrefix} | cooldown model=${modelStr} until=${formatConsoleTimeGmt7(cooldownUntil)} reason=${cooldownReason}`, { status: result.status, cooldownMs });
       }
 
       // Fallback to next model
