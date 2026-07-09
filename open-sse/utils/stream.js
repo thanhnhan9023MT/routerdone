@@ -254,6 +254,23 @@ export function createSSEStream(options = {}) {
                 usage = extracted;
               }
 
+              // Reasoning models (grok/xAI) report reasoning_tokens ON TOP of
+              // completion_tokens (total = prompt + completion + reasoning), so
+              // downstream billing that uses completion_tokens misses the reasoning.
+              // Fold the extra into completion_tokens. No-op for standard models
+              // where reasoning is already inside completion (total == prompt+completion).
+              if (parsed.usage && typeof parsed.usage === "object" && parsed.usage.prompt_tokens != null) {
+                const _p = Number(parsed.usage.prompt_tokens) || 0;
+                const _c = Number(parsed.usage.completion_tokens) || 0;
+                const _t = Number(parsed.usage.total_tokens) || 0;
+                if (_t > _p + _c) {
+                  parsed.usage.completion_tokens = _t - _p;
+                  if (usage && typeof usage === "object") usage.completion_tokens = _t - _p;
+                  output = `data: ${JSON.stringify(parsed)}\n`;
+                  injectedUsage = true;
+                }
+              }
+
               const isFinishChunk = parsed.choices?.[0]?.finish_reason;
               if (isFinishChunk && !hasValidUsage(parsed.usage)) {
                 const estimated = estimateUsage(body, accumulatedOutputText, FORMATS.OPENAI);
