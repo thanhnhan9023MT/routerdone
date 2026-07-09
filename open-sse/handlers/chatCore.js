@@ -214,18 +214,31 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   // Input size verification: estimate input tokens after all token savers.
   // Logs per-request input size for monitoring and enforces a hard cap that
   // signals compact when the conversation exceeds the model context window.
-  let estInputTokens = estimateInputTokens(translatedBody, upstreamModel);
-  if (estInputTokens > hardCapTokens && !isCompact) {
-    const pruneStats = pruneContextToHardCap(translatedBody, {
-      enabled: contextGuardEnabled !== false,
-      hardCapTokens,
-      keepRecent: effectiveContextGuardKeepRecent,
-      isCompact,
-      model: upstreamModel,
-    });
-    const pruneLine = formatHardCapPruneLog(pruneStats);
-    if (pruneLine) console.log(pruneLine);
+  // Fast path: skip the exact js-tiktoken pass when the payload is comfortably under
+  // the hard cap. byte/3 OVER-estimates tokens (English ~4 char/tok, code ~3) and the
+  // 0.7 margin absorbs estimator error, so a request flagged "under" is genuinely under
+  // — the context guard would never prune/reject it, and exact tokenization (~50ms on
+  // large bodies) would just burn CPU. Only tokenize precisely near the cap.
+  // estInputTokens feeds ONLY the context guard (prune/reject over-large ctx), NEVER
+  // billing (billing uses the provider's real usage) — so this cannot change any bill.
+  let estInputTokens;
+  const approxInputTokens = Math.ceil(Buffer.byteLength(JSON.stringify(translatedBody), "utf8") / 3);
+  if (isCompact || approxInputTokens < hardCapTokens * 0.7) {
+    estInputTokens = approxInputTokens;
+  } else {
     estInputTokens = estimateInputTokens(translatedBody, upstreamModel);
+    if (estInputTokens > hardCapTokens && !isCompact) {
+      const pruneStats = pruneContextToHardCap(translatedBody, {
+        enabled: contextGuardEnabled !== false,
+        hardCapTokens,
+        keepRecent: effectiveContextGuardKeepRecent,
+        isCompact,
+        model: upstreamModel,
+      });
+      const pruneLine = formatHardCapPruneLog(pruneStats);
+      if (pruneLine) console.log(pruneLine);
+      estInputTokens = estimateInputTokens(translatedBody, upstreamModel);
+    }
   }
   console.log(`[CTX-GUARD] input ~${estInputTokens} tokens | cap ${hardCapTokens} (ctx ${modelCtxWindow})${isCompact ? " | compact" : ""}`);
   if (estInputTokens > hardCapTokens && !isCompact) {
