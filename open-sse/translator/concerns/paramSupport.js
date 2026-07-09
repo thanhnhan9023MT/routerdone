@@ -15,6 +15,9 @@ const STRIP_RULES = [
   // Cloudflare Workers AI: content must be plain string, rejects OpenAI content-part array (#1926)
   { provider: "cloudflare-ai", flattenContent: true },
   { provider: "volcengine-ark", match: /glm-5/i, clampToModelMaxOutput: true },
+  // xAI grok models reject presence_penalty/frequency_penalty upstream
+  // (400 invalid-argument: "Model grok-… does not support parameter presencePenalty").
+  { provider: "xai", match: /grok/i, drop: ["presence_penalty", "frequency_penalty"] },
 ];
 
 // Test a rule's match (regex or predicate) against the model id.

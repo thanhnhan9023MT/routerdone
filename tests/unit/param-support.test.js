@@ -52,4 +52,22 @@ describe("stripUnsupportedParams", () => {
 
     expect(body.max_tokens).toBe(64000);
   });
+
+  it("drops presence/frequency penalties for xAI grok (unsupported upstream → 400)", () => {
+    const body = { presence_penalty: 0.5, frequency_penalty: 0.3, temperature: 0.7, max_tokens: 100 };
+
+    stripUnsupportedParams("xai", "grok-4.5", body);
+
+    expect(body).toEqual({ temperature: 0.7, max_tokens: 100 });
+  });
+
+  it("only strips penalties for xai grok, not other providers or non-grok models", () => {
+    const openai = { presence_penalty: 0.5 };
+    stripUnsupportedParams("openai", "gpt-4o", openai);
+    expect(openai).toEqual({ presence_penalty: 0.5 });
+
+    const xaiOther = { presence_penalty: 0.5 };
+    stripUnsupportedParams("xai", "aurora-1", xaiOther);
+    expect(xaiOther).toEqual({ presence_penalty: 0.5 });
+  });
 });

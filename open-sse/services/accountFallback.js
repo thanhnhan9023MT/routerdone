@@ -22,6 +22,11 @@ const PREFLIGHT_TIMEOUT_TEXT = [
 
 const CLIENT_PAYLOAD_ERROR_RULES = [
   (text) => text.includes("image_url") && text.includes("expected a valid url"),
+  // Unsupported-parameter 400s (e.g. xai grok "does not support parameter
+  // presencePenalty", or a generic "invalid-argument") are the caller's payload,
+  // not an account/model failure — classify as client error so we never
+  // cooldown/lock the account or model on one client's bad param.
+  (text) => text.includes("invalid-argument") || text.includes("does not support parameter"),
 ];
 
 function normalizeErrorText(errorText) {
