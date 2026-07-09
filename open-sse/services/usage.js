@@ -9,6 +9,7 @@ import { getCodexUsage, consumeCodexRateLimitResetCredit } from "./usage/codex.j
 
 export { consumeCodexRateLimitResetCredit };
 import { getKiroUsage } from "./usage/kiro.js";
+import { getXaiUsage } from "./usage/xai.js";
 import { getMiniMaxUsage } from "./usage/minimax.js";
 import { getCodeBuddyCnUsage } from "./usage/codebuddy-cn.js";
 import {
@@ -33,6 +34,7 @@ const USAGE_HANDLERS = {
   claude: (c) => getClaudeUsage(c.accessToken, c.proxyOptions),
   codex: (c) => getCodexUsage(c.accessToken, c.proxyOptions),
   kiro: (c) => getKiroUsage(c.accessToken, c.providerSpecificData, c.proxyOptions),
+  xai: (c) => getXaiUsage(c.accessToken, c.proxyOptions),
   qoder: (c) => getQoderUsage(c.accessToken, c.proxyOptions),
   qwen: (c) => getQwenUsage(c.accessToken, c.providerSpecificData),
   iflow: (c) => getIflowUsage(c.accessToken),

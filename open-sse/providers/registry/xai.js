@@ -18,6 +18,7 @@ export default {
     "apikey",
   ],
   hasOAuth: true,
+  features: { usage: true },
   transport: {
     baseUrl: "https://api.x.ai/v1/chat/completions",
     validateUrl: "https://api.x.ai/v1/models",

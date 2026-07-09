@@ -507,6 +507,24 @@ export function parseQuotaData(provider, data) {
         }
         break;
 
+      case "xai":
+        // xAI (Grok) exposes per-account token/request quota via the
+        // x-ratelimit-* response headers (see open-sse/services/usage/xai.js).
+        // Forward remainingPercentage explicitly; do NOT forward the absolute
+        // `remaining` (QuotaTable reads `remaining` as a 0-100 percentage).
+        if (data.quotas) {
+          Object.entries(data.quotas).forEach(([name, quota]) => {
+            normalizedQuotas.push({
+              name,
+              used: quota.used || 0,
+              total: quota.total || 0,
+              resetAt: quota.resetAt || null,
+              remainingPercentage: quota.remainingPercentage,
+            });
+          });
+        }
+        break;
+
       default:
         // Generic fallback for unknown providers
         if (data.quotas) {
