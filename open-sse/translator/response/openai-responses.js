@@ -19,8 +19,12 @@ export function openaiToOpenAIResponsesResponse(chunk, state) {
     return flushEvents(state);
   }
   
+  // Fix A: capture model + usage for the final response.completed event (were missing → broke Codex/agent /responses clients)
+  if (chunk.model && !state.model) state.model = chunk.model;
+  if (chunk.usage) state.chatUsage = chunk.usage;
+
   if (!chunk.choices?.length) return [];
-  
+
   const events = [];
   const nextSeq = () => ++state.seq;
   
@@ -173,15 +177,17 @@ function closeReasoning(state, emit) {
       part: { type: RESPONSES_ITEM.SUMMARY_TEXT, text: state.reasoningBuf }
     });
 
+    const reasoningItem = {
+      id: state.reasoningId,
+      type: RESPONSES_ITEM.REASONING,
+      summary: [{ type: RESPONSES_ITEM.SUMMARY_TEXT, text: state.reasoningBuf }]
+    };
     emit("response.output_item.done", {
       type: "response.output_item.done",
       output_index: state.reasoningIndex,
-      item: {
-        id: state.reasoningId,
-        type: RESPONSES_ITEM.REASONING,
-        summary: [{ type: RESPONSES_ITEM.SUMMARY_TEXT, text: state.reasoningBuf }]
-      }
+      item: reasoningItem
     });
+    (state.outputItems ||= []).push(reasoningItem);
   }
 }
 
@@ -245,16 +251,18 @@ function closeMessage(state, emit, idx) {
       part: { type: RESPONSES_ITEM.OUTPUT_TEXT, annotations: [], logprobs: [], text: fullText }
     });
 
+    const messageItem = {
+      id: msgId,
+      type: RESPONSES_ITEM.MESSAGE,
+      content: [{ type: RESPONSES_ITEM.OUTPUT_TEXT, annotations: [], logprobs: [], text: fullText }],
+      role: ROLE.ASSISTANT
+    };
     emit("response.output_item.done", {
       type: "response.output_item.done",
       output_index: parseInt(idx),
-      item: {
-        id: msgId,
-        type: RESPONSES_ITEM.MESSAGE,
-        content: [{ type: RESPONSES_ITEM.OUTPUT_TEXT, annotations: [], logprobs: [], text: fullText }],
-        role: ROLE.ASSISTANT
-      }
+      item: messageItem
     });
+    (state.outputItems ||= []).push(messageItem);
   }
 }
 
@@ -309,17 +317,19 @@ function closeToolCall(state, emit, idx) {
       arguments: args
     });
 
+    const funcItem = {
+      id: `fc_${callId}`,
+      type: RESPONSES_ITEM.FUNCTION_CALL,
+      arguments: args,
+      call_id: callId,
+      name: state.funcNames[idx] || ""
+    };
     emit("response.output_item.done", {
       type: "response.output_item.done",
       output_index: parseInt(idx),
-      item: {
-        id: `fc_${callId}`,
-        type: RESPONSES_ITEM.FUNCTION_CALL,
-        arguments: args,
-        call_id: callId,
-        name: state.funcNames[idx] || ""
-      }
+      item: funcItem
     });
+    (state.outputItems ||= []).push(funcItem);
 
     state.funcItemDone[idx] = true;
     state.funcArgsDone[idx] = true;
@@ -329,16 +339,30 @@ function closeToolCall(state, emit, idx) {
 function sendCompleted(state, emit) {
   if (!state.completedSent) {
     state.completedSent = true;
+    const response = {
+      id: state.responseId,
+      object: "response",
+      created_at: state.created,
+      status: "completed",
+      background: false,
+      error: null,
+      model: state.model || MODEL_FALLBACK,
+      output: state.outputItems || []
+    };
+    // Convert chat usage → Responses usage shape (best-effort; present when upstream streamed usage)
+    const u = state.chatUsage;
+    if (u) {
+      const inTok = u.prompt_tokens ?? u.input_tokens ?? 0;
+      const outTok = u.completion_tokens ?? u.output_tokens ?? 0;
+      response.usage = {
+        input_tokens: inTok,
+        output_tokens: outTok,
+        total_tokens: u.total_tokens ?? (inTok + outTok)
+      };
+    }
     emit("response.completed", {
       type: "response.completed",
-      response: {
-        id: state.responseId,
-        object: "response",
-        created_at: state.created,
-        status: "completed",
-        background: false,
-        error: null
-      }
+      response
     });
   }
 }

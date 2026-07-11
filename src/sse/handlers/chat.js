@@ -195,6 +195,8 @@ export async function handleChat(request, clientRawRequest = null) {
     return handleComboChat({
       body,
       models: comboModels,
+      comboOutputModel: comboModels.outputModel,
+      comboStripReasoning: comboModels.stripReasoning,
       handleSingleModel: (b, m, attemptContext) => handleSingleModelChat(b, m, clientRawRequest, request, apiKey, attemptContext),
       log,
       comboName: modelStr,
@@ -259,6 +261,8 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       return handleComboChat({
         body,
         models: comboModels,
+        comboOutputModel: comboModels.outputModel,
+        comboStripReasoning: comboModels.stripReasoning,
         handleSingleModel: (b, m, nestedAttemptContext) => handleSingleModelChat(b, m, clientRawRequest, request, apiKey, nestedAttemptContext),
         log,
         comboName: modelStr,

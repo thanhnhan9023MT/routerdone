@@ -88,7 +88,12 @@ export async function getComboModels(modelStr) {
 
   const combo = await getComboByName(modelStr);
   if (combo && combo.models && combo.models.length > 0) {
-    return combo.models;
+    const arr = combo.models;
+    // Attach the combo's fixed display/output name (if configured) so the caller
+    // can report it regardless of node order. Non-enumerable-ish extra prop on the array.
+    if (combo.outputModel) arr.outputModel = combo.outputModel;
+    if (combo.stripReasoning) arr.stripReasoning = true;
+    return arr;
   }
   return null;
 }

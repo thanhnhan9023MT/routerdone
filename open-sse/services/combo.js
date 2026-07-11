@@ -8,7 +8,7 @@ import { isImmediateFallbackStatus, isRetryableTransientStatus, resolveRoutePoli
 import { getCapabilitiesForModel } from "../providers/capabilities.js";
 import { extractTextContent } from "../translator/formats/gemini.js";
 import { MODEL_FAILURE_BACKOFF_MAX_MS } from "../config/errorConfig.js";
-import { COMBO_REASONING_STREAM_FIRST_PRODUCTIVE_TIMEOUT_MS } from "../config/runtimeConfig.js";
+import { COMBO_REASONING_STREAM_FIRST_PRODUCTIVE_TIMEOUT_MS, COMBO_UNIFY_RESPONSE_MODEL } from "../config/runtimeConfig.js";
 
 // Hard capabilities = input modalities; missing one drops request data (e.g. image
 // stripped). Must be prioritized. Soft (e.g. search) only degrades a feature.
@@ -382,8 +382,145 @@ export function getComboModelsFromData(modelStr, combosData) {
  * @param {number|string} [options.comboRetryDelayMs=2000] - Delay between transient retries in ms
  * @returns {Promise<Response>}
  */
-export async function handleComboChat({ body, models, handleSingleModel, log, comboName, comboStrategy, comboStickyLimit = 1, comboRetryAttempts, comboRetryDelayMs, comboPreflightTimeoutMs, autoSwitch = true }) {
+// --- Combo response identity normalization ----------------------------------
+// A combo presents ONE identity to the client: whichever node actually serves
+// (the primary, or a fallback such as grok), the response's `model` field is
+// rewritten to the combo's PRIMARY node model (models[0]). This keeps a claude
+// combo looking like claude even when it falls back to a non-claude provider, so
+// downstream model-name checks stay consistent. Applied to the success path only.
+function comboReportModel(models) {
+  const first = Array.isArray(models) ? models.find((m) => typeof m === "string" && m.trim()) : null;
+  if (!first) return null;
+  // Strip to the LAST "/" so reseller-internal prefixes are hidden: a node like
+  // `psh/cx/gpt-5.6-luna` (provider `psh`, upstream id `cx/gpt-5.6-luna`) reports the
+  // clean `gpt-5.6-luna`; single-prefix nodes (`ttfa/claude-opus-4.8`) are unchanged.
+  const slash = first.lastIndexOf("/");
+  const model = (slash >= 0 ? first.slice(slash + 1) : first).trim();
+  return model || null;
+}
+
+// A combo must look like a SINGLE model, structurally identical no matter which
+// node served. Beyond `model` we normalize the provider "tells" that differ
+// between upstreams: strip `system_fingerprint` + `service_tier` (present on some
+// providers e.g. grok/xai, absent on the claude nodes) and normalize the response
+// `id` to the `chatcmpl-msg_<id>` shape the claude path emits. Each SSE event is
+// one JSON object per `data:` line, so a per-line JSON parse is safe + robust.
+function normalizeChatId(id) {
+  return "chatcmpl-msg_" + id.replace(/^chatcmpl-(msg[-_])?/i, "");
+}
+
+function maskComboObject(obj, reportModel, stripReasoning) {
+  if (!obj || typeof obj !== "object") return obj;
+  if (typeof obj.model === "string") obj.model = reportModel;
+  if (obj.message && typeof obj.message.model === "string") obj.message.model = reportModel;
+  // /responses events (response.created / response.completed) carry the model nested under obj.response —
+  // mask it too so a masked combo (e.g. gpt-5.6-luna served by grok) never leaks the upstream model there.
+  if (obj.response && typeof obj.response === "object" && typeof obj.response.model === "string") obj.response.model = reportModel;
+  if ("system_fingerprint" in obj) delete obj.system_fingerprint;
+  if ("service_tier" in obj) delete obj.service_tier;
+  if (typeof obj.id === "string") obj.id = normalizeChatId(obj.id);
+  // stripReasoning = make the response match a MINIMAL non-reasoning provider (e.g. premiumshop
+  // gpt-5.6-luna): drop the model's visible thinking, and normalize the usage shape.
+  if (stripReasoning) {
+    if (Array.isArray(obj.choices)) {
+      for (const ch of obj.choices) {
+        if (ch?.delta && "reasoning_content" in ch.delta) delete ch.delta.reasoning_content;
+        if (ch?.message && "reasoning_content" in ch.message) delete ch.message.reasoning_content;
+      }
+    }
+    // Usage: drop routerdone's `estimated` flag and add `prompt_tokens_details` (as luna returns).
+    if (obj.usage && typeof obj.usage === "object") {
+      delete obj.usage.estimated;
+      if (!("prompt_tokens_details" in obj.usage)) obj.usage.prompt_tokens_details = { cached_tokens: 0 };
+      // premiumshop luna also exposes a top-level cached_tokens in the STREAM usage chunk only.
+      if (obj.object === "chat.completion.chunk" && !("cached_tokens" in obj.usage)) obj.usage.cached_tokens = 0;
+    }
+  }
+  return obj;
+}
+
+// A streaming chunk with no real content after normalization — dropped so reasoning-only OR
+// role-only placeholders don't leak (a minimal provider like luna omits the standalone role chunk).
+function isEmptyStreamChunk(obj) {
+  if (!obj || obj.object !== "chat.completion.chunk" || !Array.isArray(obj.choices)) return false;
+  return obj.choices.every((ch) => {
+    if (!ch) return true;
+    if (ch.finish_reason) return false;
+    const d = ch.delta || {};
+    return !d.content && !d.tool_calls && !d.function_call && !d.refusal;
+  });
+}
+
+function maskComboSseLine(rawLine, reportModel, stripReasoning) {
+  if (!rawLine.startsWith("data:")) return rawLine; // event/comment/blank lines pass through
+  const jsonStr = rawLine.slice(rawLine.indexOf(":") + 1).replace(/^\s+/, "");
+  if (!jsonStr.startsWith("{")) return rawLine; // [DONE], keep-alives, etc.
+  try {
+    const obj = maskComboObject(JSON.parse(jsonStr), reportModel, stripReasoning);
+    if (stripReasoning && isEmptyStreamChunk(obj)) return null; // drop reasoning-only chunk
+    return "data: " + JSON.stringify(obj);
+  } catch {
+    return rawLine;
+  }
+}
+
+async function rewriteComboResponseModel(response, reportModel, stripReasoning) {
+  try {
+    if (!reportModel || !response || !response.ok || !response.body) return response;
+    const contentType = response.headers.get("content-type") || "";
+
+    // Streaming SSE: line-buffered so events split across network chunks are
+    // handled; each `data:` JSON is masked, other lines pass through untouched.
+    if (contentType.includes("text/event-stream")) {
+      const decoder = new TextDecoder();
+      const encoder = new TextEncoder();
+      let buf = "";
+      const ts = new TransformStream({
+        transform(chunk, controller) {
+          buf += decoder.decode(chunk, { stream: true });
+          let nl;
+          let out = "";
+          while ((nl = buf.indexOf("\n")) >= 0) {
+            const masked = maskComboSseLine(buf.slice(0, nl), reportModel, stripReasoning);
+            if (masked !== null) out += masked + "\n";
+            buf = buf.slice(nl + 1);
+          }
+          if (out) controller.enqueue(encoder.encode(out));
+        },
+        flush(controller) {
+          if (buf) {
+            const masked = maskComboSseLine(buf, reportModel, stripReasoning);
+            if (masked !== null) controller.enqueue(encoder.encode(masked));
+          }
+        },
+      });
+      const headers = new Headers(response.headers);
+      return new Response(response.body.pipeThrough(ts), { status: response.status, statusText: response.statusText, headers });
+    }
+
+    // Non-stream JSON: parse, mask, re-serialize.
+    if (contentType.includes("application/json")) {
+      const text = await response.text();
+      const headers = new Headers(response.headers);
+      let obj;
+      try { obj = JSON.parse(text); } catch { return new Response(text, { status: response.status, statusText: response.statusText, headers }); }
+      maskComboObject(obj, reportModel, stripReasoning);
+      headers.delete("content-length");
+      return new Response(JSON.stringify(obj), { status: response.status, statusText: response.statusText, headers });
+    }
+
+    return response;
+  } catch {
+    // Identity normalization must never break a working response.
+    return response;
+  }
+}
+
+export async function handleComboChat({ body, models, comboOutputModel = null, comboStripReasoning = false, handleSingleModel, log, comboName, comboStrategy, comboStickyLimit = 1, comboRetryAttempts, comboRetryDelayMs, comboPreflightTimeoutMs, autoSwitch = true }) {
   const startedAt = Date.now();
+  // A combo's fixed display name (comboOutputModel) wins so the reported model stays
+  // constant regardless of node order; else fall back to the primary node's model.
+  const reportModel = comboOutputModel || (COMBO_UNIFY_RESPONSE_MODEL ? comboReportModel(models) : null);
   const comboRunId = `combo-${startedAt.toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
   const comboLogPrefix = `run=${comboRunId}`;
   const summary = { tried: 0, skipped: 0, failed: 0 };
@@ -462,7 +599,7 @@ export async function handleComboChat({ body, models, handleSingleModel, log, co
         resetComboModelFailure(modelStr);
         log.info("COMBO", `${comboLogPrefix} | Model ${modelStr} accepted stream`);
         logSummary(`success=${modelStr}`);
-        return result;
+        return await rewriteComboResponseModel(result, reportModel, comboStripReasoning);
       }
 
       // Extract error info from response

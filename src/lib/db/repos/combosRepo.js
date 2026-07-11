@@ -9,6 +9,8 @@ function rowToCombo(row) {
     name: row.name,
     kind: row.kind,
     models: parseJson(row.models, []),
+    outputModel: row.outputModel || null,
+    stripReasoning: row.stripReasoning ? true : false,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };

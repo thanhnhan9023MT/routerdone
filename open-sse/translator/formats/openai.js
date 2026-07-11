@@ -126,6 +126,12 @@ export function filterToOpenAIFormat(body) {
     }
   }
 
+  // grok/xAI (and strict OpenAI-compatible upstreams) reject a tool_choice with no tools:
+  // "A tool_choice was set on the request but no tools were specified." Drop the dangling tool_choice.
+  if (body.tool_choice !== undefined && (!Array.isArray(body.tools) || body.tools.length === 0)) {
+    delete body.tool_choice;
+  }
+
   return body;
 }
 
