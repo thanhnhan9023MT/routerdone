@@ -37,14 +37,15 @@ export function normalizeResponsesInput(input) {
 }
 
 export function toOpenAIContentBlock(block) {
-  if (block?.type === RESPONSES_ITEM.INPUT_TEXT) return { type: OPENAI_BLOCK.TEXT, text: block.text };
-  if (block?.type === RESPONSES_ITEM.OUTPUT_TEXT) return { type: OPENAI_BLOCK.TEXT, text: block.text };
+  if (block?.type === RESPONSES_ITEM.INPUT_TEXT || block?.type === RESPONSES_ITEM.OUTPUT_TEXT) {
+    return { type: OPENAI_BLOCK.TEXT, text: block.text || "" };
+  }
   if (block?.type === RESPONSES_ITEM.INPUT_IMAGE || Object.hasOwn(block || {}, "image_url")) {
     const url = normalizeImageReference(block);
     if (!url) return { type: OPENAI_BLOCK.TEXT, text: IMAGE_OMITTED };
     return { type: OPENAI_BLOCK.IMAGE_URL, image_url: { url, detail: block.detail || block.image_url?.detail || "auto" } };
   }
-  return block;
+  return { type: OPENAI_BLOCK.TEXT, text: typeof block?.text === "string" ? block.text : "[unsupported content omitted]" };
 }
 
 /**

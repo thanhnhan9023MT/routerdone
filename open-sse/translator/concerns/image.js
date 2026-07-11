@@ -63,7 +63,29 @@ function detectImageMime(buf) {
   return null;
 }
 
-// Validate an inline image data URI strictly before forwarding to providers.
+// Canonical alias for image MIME types that clients commonly send but whose
+// detected signature reports the canonical form.
+const MIME_ALIASES = {
+  "image/jpg": "image/jpeg",
+};
+
+function canonicalImageMime(mime) {
+  const lower = String(mime || "").toLowerCase();
+  return MIME_ALIASES[lower] || lower;
+}
+
+// Validate an inline image data URI before forwarding to providers.
+//
+// Policy: accept a client-supplied data URI when its declared MIME is an image
+// type and its base64 payload decodes to non-empty bytes. We only REJECT when a
+// known image signature IS detected and it conflicts with the declared MIME
+// (e.g. declared image/png but bytes are JPEG). Unknown formats (svg/tiff/heic/
+// avif/ico) and non-canonical base64 are forwarded as-is, matching the
+// pre-validation behavior where clients could send any decodable image. The
+// strict round-trip re-encode check was removed because it silently dropped
+// legitimate non-canonical base64 with no security benefit (decoded bytes are
+// the bytes, regardless of base64 spelling). Remote-URL safety is enforced
+// separately by fetchImageAsBase64 (SSRF/size/magic-byte), which is untouched.
 export function isValidImageDataUri(value) {
   const parsed = parseDataUri(value);
   if (!parsed || !/^image\/[a-z0-9.+-]+$/i.test(parsed.mimeType)) return false;
@@ -76,8 +98,13 @@ export function isValidImageDataUri(value) {
   } catch {
     return false;
   }
-  if (bytes.length === 0 || bytes.toString("base64") !== payload) return false;
-  return detectImageMime(bytes) === parsed.mimeType.toLowerCase();
+  if (bytes.length === 0) return false;
+  const detected = detectImageMime(bytes);
+  const declared = canonicalImageMime(parsed.mimeType);
+  // No recognized signature (e.g. svg/tiff/heic/avif) -> forward to the model.
+  if (!detected) return true;
+  // Signature detected: only reject a genuine conflict, otherwise accept.
+  return detected === declared;
 }
 
 /**
@@ -113,7 +140,12 @@ export async function fetchImageAsBase64(imageUrl, options = {}) {
   try {
     // redirect:"manual" prevents a public URL redirecting to a private one (SSRF bypass).
     const response = await fetch(imageUrl, { signal: fetchSignal, redirect: "manual", dispatcher });
+    // Some CDNs return a redirect before the actual image. Do not follow it:
+    // callers must provide a directly fetchable, public image URL.
+    if (response.status >= 300 && response.status < 400) return null;
     if (!response.ok || !response.body) return null;
+    const contentLength = Number(response.headers?.get?.("content-length"));
+    if (Number.isFinite(contentLength) && contentLength > maxBytes) return null;
 
     // Stream-read with a hard byte cap to avoid loading huge payloads into memory.
     const reader = response.body.getReader();

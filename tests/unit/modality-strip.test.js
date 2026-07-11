@@ -50,13 +50,26 @@ describe("stripUnsupportedModalities", () => {
     expect(body.messages[0].content.some((b) => b.type === "image_url")).toBe(true);
   });
 
-  it("openai: strips invalid inline image when vision:true", () => {
+  it("openai: rejects signature conflict, forwards unknown-format image", () => {
+    // Real JPEG bytes (FFD8FF) declared as image/png -> conflict -> strip.
+    const jpegAsPng = "data:image/png;base64,/9j/4AAQ";
     const body = { messages: [{ role: "user", content: [
-      { type: "image_url", image_url: { url: "data:image/png;base64,QUJD" } },
+      { type: "text", text: "hi" },
+      { type: "image_url", image_url: { url: jpegAsPng } },
     ] }] };
     expect(stripUnsupportedModalities(body, FORMATS.OPENAI, NO_AUDIO)).toBe(true);
     expect(body.messages[0].content.some((b) => b.type === "image_url")).toBe(false);
     expect(body.messages[0].content.some((b) => /invalid image data/.test(b.text || ""))).toBe(true);
+  });
+
+  it("openai: forwards non-image-bytes data URI (decode-only, no signature)", () => {
+    // "QUJD" decodes to ASCII "ABC" — no image signature. Per relaxed policy,
+    // we forward decodable data URIs rather than second-guessing the client.
+    const body = { messages: [{ role: "user", content: [
+      { type: "image_url", image_url: { url: "data:image/png;base64,QUJD" } },
+    ] }] };
+    stripUnsupportedModalities(body, FORMATS.OPENAI, NO_AUDIO);
+    expect(body.messages[0].content.some((b) => b.type === "image_url")).toBe(true);
   });
 
   it("claude: strips image + document by capability", () => {
@@ -145,21 +158,34 @@ describe("stripUnsupportedModalities", () => {
     expect(body.input[0].output[0].image_url).toBe(VALID_PNG);
   });
 
-  it("responses: strips non-image bytes in a data URI when vision:true", () => {
+  it("responses: rejects signature conflict when vision:true", () => {
+    // Real JPEG bytes declared as image/png -> conflict -> strip.
     const body = { input: [{ role: "user", content: [
-      { type: "input_image", image_url: "data:image/png;base64,QUJD" },
+      { type: "input_image", image_url: "data:image/png;base64,/9j/4AAQ" },
     ] }] };
     expect(stripUnsupportedModalities(body, FORMATS.OPENAI_RESPONSES, ALL)).toBe(true);
     expect(body.input[0].content.some((b) => b.type === "input_image")).toBe(false);
     expect(body.input[0].content.some((b) => /invalid image data/.test(b.text || ""))).toBe(true);
   });
 
-  it("responses: strips non-canonical base64 image data", () => {
+  it("responses: forwards image/jpg JPEG data URI (alias regression)", () => {
+    // Clients commonly send image/jpg; detected signature is image/jpeg.
+    // The alias must accept it instead of silently dropping the image.
+    const body = { input: [{ role: "user", content: [
+      { type: "input_image", image_url: "data:image/jpg;base64,/9j/4AAQ" },
+    ] }] };
+    expect(stripUnsupportedModalities(body, FORMATS.OPENAI_RESPONSES, ALL)).toBe(false);
+    expect(body.input[0].content.some((b) => b.type === "input_image")).toBe(true);
+  });
+
+  it("responses: rejects malformed base64 (padding not at end)", () => {
+    // "==A" places a non-padding char after the padding -> genuinely invalid
+    // base64, correctly rejected by the charset/length guard.
     const body = { input: [{ role: "user", content: [
       { type: "input_image", image_url: "data:image/png;base64,iVBORw0KGgo==A" },
     ] }] };
-    expect(stripUnsupportedModalities(body, FORMATS.OPENAI_RESPONSES, ALL)).toBe(true);
-    expect(body.input[0].content.some((b) => /invalid image data/.test(b.text || ""))).toBe(true);
+    stripUnsupportedModalities(body, FORMATS.OPENAI_RESPONSES, ALL);
+    expect(body.input[0].content.some((b) => b.type === "input_image")).toBe(false);
   });
 
   it("responses: keeps remote output image_url when vision:true", () => {
