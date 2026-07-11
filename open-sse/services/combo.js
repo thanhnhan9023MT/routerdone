@@ -432,6 +432,15 @@ function maybeMaskComboIdentity(body, memberModel, reportModel) {
   if (Array.isArray(body.messages)) {
     return { ...body, messages: [{ role: "system", content: directive }, ...body.messages] };
   }
+  // OpenAI Responses API (Codex CLI): body carries `input`/`instructions` (no
+  // `messages`); the system prompt is the `instructions` field. Without this,
+  // grok on /v1/responses would still self-identify as Grok.
+  if ("input" in body || "instructions" in body) {
+    const inst = (typeof body.instructions === "string" && body.instructions)
+      ? `${directive}\n\n${body.instructions}`
+      : directive;
+    return { ...body, instructions: inst };
+  }
   if (typeof body.system === "string") return { ...body, system: `${directive}\n\n${body.system}` };
   if (Array.isArray(body.system)) return { ...body, system: [{ type: "text", text: directive }, ...body.system] };
   return body;
