@@ -1,0 +1,62 @@
+// Kenari — OpenAI-compatible provider (https://kenari.id/v1).
+// Chat-completions format, API-key auth (Bearer). Models fetched live from
+// /v1/models (also hardcoded below as of 2026-07-10). Served by the
+// DefaultExecutor. Indonesian reseller (IDR pricing); carries Claude / GPT-5.6
+// (sol/luna/terra) / Grok-4.5 / GLM-5.2 / DeepSeek / Kimi / MiniMax / Qwen / MiMo.
+export default {
+  id: "kenari",
+  priority: 55,
+  alias: "kn",
+  aliases: ["kenari", "kn"],
+  uiAlias: "kn",
+  display: {
+    name: "Kenari",
+    icon: "bolt",
+    color: "#F59E0B",
+    textIcon: "KN",
+    website: "https://kenari.id",
+    notice: {
+      apiKeyUrl: "https://kenari.id",
+    },
+  },
+  category: "apikey",
+  authType: "apikey",
+  transport: {
+    baseUrl: "https://kenari.id/v1/chat/completions",
+    validateUrl: "https://kenari.id/v1/models",
+  },
+  models: [
+    { id: "claude-fable-5", name: "Claude Fable 5" },
+    { id: "claude-opus-4-7", name: "Claude Opus 4.7" },
+    { id: "claude-opus-4-8", name: "Claude Opus 4.8" },
+    { id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6" },
+    { id: "claude-sonnet-5", name: "Claude Sonnet 5" },
+    { id: "deepseek-v4-flash", name: "DeepSeek V4 Flash" },
+    { id: "deepseek-v4-flash:free", name: "DeepSeek V4 Flash (free)" },
+    { id: "deepseek-v4-pro", name: "DeepSeek V4 Pro" },
+    { id: "gemma-4-31b-it", name: "Gemma 4 31b It" },
+    { id: "minimax-m3", name: "MiniMax M3" },
+    { id: "kimi-k2-6", name: "Kimi K2.6" },
+    { id: "kimi-k2-7-code", name: "Kimi K2.7 Code" },
+    { id: "gpt-5-4-mini", name: "GPT 5.4 Mini" },
+    { id: "gpt-5-5", name: "GPT 5.5" },
+    { id: "gpt-5-6-luna", name: "GPT 5.6 Luna" },
+    { id: "gpt-5-6-sol", name: "GPT 5.6 Sol" },
+    { id: "gpt-5-6-terra", name: "GPT 5.6 Terra" },
+    { id: "gpt-image-2", name: "GPT Image 2" },
+    { id: "gpt-oss-120b", name: "GPT OSS 120b" },
+    { id: "gpt-oss-20b", name: "GPT OSS 20b" },
+    { id: "qwen3-7-plus", name: "Qwen3.7 Plus" },
+    { id: "hy3:free", name: "Hunyuan3 (free)" },
+    { id: "grok-4-3", name: "Grok 4.3" },
+    { id: "grok-4-5", name: "Grok 4.5" },
+    { id: "grok-build-0-1", name: "Grok Build 0.1" },
+    { id: "mimo-v2-5", name: "MiMo V2.5" },
+    { id: "mimo-v2-5-pro", name: "MiMo V2.5 Pro" },
+    { id: "mimo-v2-5:free", name: "MiMo V2.5 (free)" },
+    { id: "glm-5-1", name: "GLM 5.1" },
+    { id: "glm-5-2", name: "GLM 5.2" },
+  ],
+  modelsFetcher: { url: "https://kenari.id/v1/models", type: "openai" },
+  serviceKinds: ["llm"],
+};

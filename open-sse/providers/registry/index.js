@@ -101,6 +101,7 @@ import p98 from "./sh00t.js";
 import p99 from "./sypham.js";
 import p100 from "./kimchi.js";
 import p101 from "./xpiki.js";
+import p102 from "./kenari.js";
 
 export default [
   p0,
@@ -204,5 +205,6 @@ export default [
   p98,
   p99,
   p100,
-  p101
+  p101,
+  p102
 ];
