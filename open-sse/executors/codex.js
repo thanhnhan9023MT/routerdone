@@ -180,15 +180,15 @@ export class CodexExecutor extends BaseExecutor {
   }
 
   async execute(args) {
-    const imgCount = Array.isArray(args.body?.input) ? args.body.input.reduce((n, it) => n + (Array.isArray(it.content) ? it.content.filter(c => c.type === "image_url").length : 0), 0) : 0;
+    const imgCount = Array.isArray(args.body?.input) ? args.body.input.reduce((n, it) => n + (Array.isArray(it.content) ? it.content.filter(c => c.type === "image_url" || c.type === "input_image").length : 0), 0) : 0;
     const inputLen = Array.isArray(args.body?.input) ? args.body.input.length : 0;
     dbg("CODEX", `execute start | inputItems=${inputLen} | images=${imgCount} | sessionId=${args.requestContext?.sessionId || "pending"}`);
+    // Skip the second full input traversal when no image exists.
+    // `imgCount` already scans the input; prefetch is only needed for remote images.
     if (imgCount > 0) {
       const t0 = Date.now();
       await this.prefetchImages(args.body);
       dbg("CODEX", `prefetchImages done | ${Date.now() - t0}ms`);
-    } else {
-      await this.prefetchImages(args.body);
     }
 
     // Retry loop for SSE-level overloaded errors (200 OK body contains event: error)
