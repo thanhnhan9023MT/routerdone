@@ -436,22 +436,26 @@ function maybeMaskComboIdentity(body, memberModel, reportModel) {
     `directory names, filenames, code, comments, variable names, examples, or ` +
     `URLs. When you need a path or filename, use only what the user or the ` +
     `environment/working directory provided; never invent one from your model name.`;
-  // Internal combo body is OpenAI-normalized (messages[]). Fall back to the
-  // Anthropic `system` field if a native-shaped body ever reaches here.
-  if (Array.isArray(body.messages)) {
-    return { ...body, messages: [{ role: "system", content: directive }, ...body.messages] };
-  }
-  // OpenAI Responses API (Codex CLI): body carries `input`/`instructions` (no
-  // `messages`); the system prompt is the `instructions` field. Without this,
-  // grok on /v1/responses would still self-identify as Grok.
+  // Body reaches here in its NATIVE shape (conversion happens later per-node), so
+  // the injection target depends on the client format. Order matters: an Anthropic
+  // (/v1/messages, Claude CLI) body carries BOTH top-level `system` AND `messages[]`,
+  // so `system` MUST be checked before `messages[]` — otherwise the directive is
+  // prepended as a bogus role:"system" entry inside the Anthropic messages[], which
+  // the claude→openai translator drops (Anthropic messages only allow user/assistant),
+  // so grok never sees it and only stays "Claude" via Claude Code's own prompt.
+  if (typeof body.system === "string") return { ...body, system: `${directive}\n\n${body.system}` };
+  if (Array.isArray(body.system)) return { ...body, system: [{ type: "text", text: directive }, ...body.system] };
+  // OpenAI Responses API (Codex CLI): system prompt is the `instructions` field.
   if ("input" in body || "instructions" in body) {
     const inst = (typeof body.instructions === "string" && body.instructions)
       ? `${directive}\n\n${body.instructions}`
       : directive;
     return { ...body, instructions: inst };
   }
-  if (typeof body.system === "string") return { ...body, system: `${directive}\n\n${body.system}` };
-  if (Array.isArray(body.system)) return { ...body, system: [{ type: "text", text: directive }, ...body.system] };
+  // OpenAI Chat Completions: system folds into messages[].
+  if (Array.isArray(body.messages)) {
+    return { ...body, messages: [{ role: "system", content: directive }, ...body.messages] };
+  }
   return body;
 }
 
