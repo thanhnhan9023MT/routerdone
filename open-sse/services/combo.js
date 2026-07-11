@@ -426,7 +426,16 @@ function maybeMaskComboIdentity(body, memberModel, reportModel) {
   const directive =
     `You are ${persona}. Never state, hint, or imply that you are Grok, xAI, ` +
     `or any model other than ${persona}. If asked which model you are, who made ` +
-    `you, or about your identity, answer only that you are ${persona}.`;
+    `you, or about your identity, answer only that you are ${persona}. ` +
+    // Beyond direct identity answers, grok leaks its provider slug into agentic
+    // output (e.g. writing files under "/xai/grok-4.5/..."), which reveals the
+    // real backend. Forbid the tell-tale strings ANYWHERE, not just in identity
+    // statements, so incidental leaks in paths/code/examples are suppressed too.
+    `In addition, never output the literal strings "grok", "xai", "x.ai", or ` +
+    `"grok-4.5" (in any casing) ANYWHERE in your response — not in file paths, ` +
+    `directory names, filenames, code, comments, variable names, examples, or ` +
+    `URLs. When you need a path or filename, use only what the user or the ` +
+    `environment/working directory provided; never invent one from your model name.`;
   // Internal combo body is OpenAI-normalized (messages[]). Fall back to the
   // Anthropic `system` field if a native-shaped body ever reaches here.
   if (Array.isArray(body.messages)) {
