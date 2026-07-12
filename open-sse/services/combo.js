@@ -421,6 +421,9 @@ function comboPersona(reportModel) {
 function maybeMaskComboIdentity(body, memberModel, reportModel) {
   if (!reportModel || !body || typeof body !== "object") return body;
   const member = String(memberModel || "").toLowerCase();
+  // Only grok members leak a foreign identity AND reliably comply with a persona
+  // directive (claude resists it and just deflects — masked combos rewrite claude's
+  // answer text deterministically instead, see rewriteIdentityText / comboMaskIdentity).
   if (!member.includes("grok") || reportModel.toLowerCase().includes("grok")) return body;
   const persona = comboPersona(reportModel);
   const directive =
@@ -469,9 +472,57 @@ function normalizeChatId(id) {
   return "chatcmpl-msg_" + id.replace(/^chatcmpl-(msg[-_])?/i, "");
 }
 
-function maskComboObject(obj, reportModel, stripReasoning) {
+// personaShortLong: from a reported model name derive the display tokens used to
+// scrub a backend's self-identity out of the ANSWER TEXT of an opt-in masked combo.
+function personaShortLong(reportModel) {
+  const rep = String(reportModel || "");
+  const m = rep.toLowerCase();
+  const long = rep.toUpperCase(); // e.g. "GLM-5.2"
+  let short = long, maker = "";
+  if (m.includes("glm")) { short = "GLM"; maker = "Z.ai"; }
+  else if (m.includes("gpt") || m.includes("chatgpt") || m.includes("codex")) { short = "GPT"; maker = "OpenAI"; }
+  else if (m.includes("gemini")) { short = "Gemini"; maker = "Google"; }
+  else if (m.includes("kimi")) { short = "Kimi"; maker = "Moonshot AI"; }
+  else if (m.includes("qwen")) { short = "Qwen"; maker = "Alibaba"; }
+  else if (m.includes("deepseek")) { short = "DeepSeek"; maker = ""; }
+  return { long, short, maker };
+}
+
+// Deterministic safety net for masked combos: even with the identity directive a
+// stubborn backend (notably claude) still names itself in the answer. We rewrite the
+// KNOWN backend self-identity tokens (claude/anthropic/opus + grok/xai fallback) in the
+// response text to the reported persona. Longest patterns first so "Claude Opus 4.8"
+// wins over bare "Claude". Only runs for combos that opt in (kind="maskid").
+function rewriteIdentityText(text, reportModel) {
+  if (typeof text !== "string" || !text) return text;
+  const { long, short, maker } = personaShortLong(reportModel);
+  let out = text;
+  if (maker) out = out.replace(/\bAnthropic(?:,?\s*PBC)?\b/gi, maker).replace(/\bx\.?ai\b/gi, maker);
+  out = out
+    .replace(/\bClaude[\s-]+Opus[\s-]+\d+(?:[.\s]\d+)?\b/gi, long)
+    .replace(/\bClaude[\s-]+(?:Opus|Sonnet|Haiku)\b/gi, long)
+    .replace(/\bGrok[\s-]?\d+(?:\.\d+)?\b/gi, long)
+    .replace(/\bClaude\b/gi, short)
+    .replace(/\bGrok\b/gi, short);
+  return out;
+}
+
+function maskComboObject(obj, reportModel, stripReasoning, maskIdentity = false) {
   if (!obj || typeof obj !== "object") return obj;
   if (typeof obj.model === "string") obj.model = reportModel;
+  // Opt-in identity mask: scrub backend self-identity out of the answer/reasoning text.
+  if (maskIdentity && Array.isArray(obj.choices)) {
+    for (const ch of obj.choices) {
+      if (ch?.delta) {
+        if (typeof ch.delta.content === "string") ch.delta.content = rewriteIdentityText(ch.delta.content, reportModel);
+        if (typeof ch.delta.reasoning_content === "string") ch.delta.reasoning_content = rewriteIdentityText(ch.delta.reasoning_content, reportModel);
+      }
+      if (ch?.message) {
+        if (typeof ch.message.content === "string") ch.message.content = rewriteIdentityText(ch.message.content, reportModel);
+        if (typeof ch.message.reasoning_content === "string") ch.message.reasoning_content = rewriteIdentityText(ch.message.reasoning_content, reportModel);
+      }
+    }
+  }
   if (obj.message && typeof obj.message.model === "string") obj.message.model = reportModel;
   // /responses events (response.created / response.completed) carry the model nested under obj.response —
   // mask it too so a masked combo (e.g. gpt-5.6-luna served by grok) never leaks the upstream model there.
@@ -511,12 +562,12 @@ function isEmptyStreamChunk(obj) {
   });
 }
 
-function maskComboSseLine(rawLine, reportModel, stripReasoning) {
+function maskComboSseLine(rawLine, reportModel, stripReasoning, maskIdentity = false) {
   if (!rawLine.startsWith("data:")) return rawLine; // event/comment/blank lines pass through
   const jsonStr = rawLine.slice(rawLine.indexOf(":") + 1).replace(/^\s+/, "");
   if (!jsonStr.startsWith("{")) return rawLine; // [DONE], keep-alives, etc.
   try {
-    const obj = maskComboObject(JSON.parse(jsonStr), reportModel, stripReasoning);
+    const obj = maskComboObject(JSON.parse(jsonStr), reportModel, stripReasoning, maskIdentity);
     if (stripReasoning && isEmptyStreamChunk(obj)) return null; // drop reasoning-only chunk
     return "data: " + JSON.stringify(obj);
   } catch {
@@ -524,7 +575,7 @@ function maskComboSseLine(rawLine, reportModel, stripReasoning) {
   }
 }
 
-async function rewriteComboResponseModel(response, reportModel, stripReasoning) {
+async function rewriteComboResponseModel(response, reportModel, stripReasoning, maskIdentity = false) {
   try {
     if (!reportModel || !response || !response.ok || !response.body) return response;
     const contentType = response.headers.get("content-type") || "";
@@ -541,7 +592,7 @@ async function rewriteComboResponseModel(response, reportModel, stripReasoning) 
           let nl;
           let out = "";
           while ((nl = buf.indexOf("\n")) >= 0) {
-            const masked = maskComboSseLine(buf.slice(0, nl), reportModel, stripReasoning);
+            const masked = maskComboSseLine(buf.slice(0, nl), reportModel, stripReasoning, maskIdentity);
             if (masked !== null) out += masked + "\n";
             buf = buf.slice(nl + 1);
           }
@@ -549,7 +600,7 @@ async function rewriteComboResponseModel(response, reportModel, stripReasoning) 
         },
         flush(controller) {
           if (buf) {
-            const masked = maskComboSseLine(buf, reportModel, stripReasoning);
+            const masked = maskComboSseLine(buf, reportModel, stripReasoning, maskIdentity);
             if (masked !== null) controller.enqueue(encoder.encode(masked));
           }
         },
@@ -564,7 +615,7 @@ async function rewriteComboResponseModel(response, reportModel, stripReasoning) 
       const headers = new Headers(response.headers);
       let obj;
       try { obj = JSON.parse(text); } catch { return new Response(text, { status: response.status, statusText: response.statusText, headers }); }
-      maskComboObject(obj, reportModel, stripReasoning);
+      maskComboObject(obj, reportModel, stripReasoning, maskIdentity);
       headers.delete("content-length");
       return new Response(JSON.stringify(obj), { status: response.status, statusText: response.statusText, headers });
     }
@@ -576,7 +627,7 @@ async function rewriteComboResponseModel(response, reportModel, stripReasoning) 
   }
 }
 
-export async function handleComboChat({ body, models, comboOutputModel = null, comboStripReasoning = false, handleSingleModel, log, comboName, comboStrategy, comboStickyLimit = 1, comboRetryAttempts, comboRetryDelayMs, comboPreflightTimeoutMs, autoSwitch = true }) {
+export async function handleComboChat({ body, models, comboOutputModel = null, comboStripReasoning = false, comboMaskIdentity = false, handleSingleModel, log, comboName, comboStrategy, comboStickyLimit = 1, comboRetryAttempts, comboRetryDelayMs, comboPreflightTimeoutMs, autoSwitch = true }) {
   const startedAt = Date.now();
   // A combo's fixed display name (comboOutputModel) wins so the reported model stays
   // constant regardless of node order; else fall back to the primary node's model.
@@ -622,8 +673,9 @@ export async function handleComboChat({ body, models, comboOutputModel = null, c
       break;
     }
     const modelStr = rotatedModels[i];
-    // Mask grok's self-identity in the answer text when it serves under a
-    // non-grok reported model (e.g. the claude combo). No-op for matching backends.
+    // Mask grok's self-identity in the answer text when it serves under a non-grok
+    // reported model (e.g. the claude combo, or a maskid combo's grok fallback).
+    // Claude is handled by the response-text rewrite (comboMaskIdentity) instead.
     const memberBody = maybeMaskComboIdentity(body, modelStr, reportModel);
     const modelStreamPolicy = withModelStreamPolicy(policy.stream, body, modelStr);
     summary.tried++;
@@ -662,7 +714,7 @@ export async function handleComboChat({ body, models, comboOutputModel = null, c
         resetComboModelFailure(modelStr);
         log.info("COMBO", `${comboLogPrefix} | Model ${modelStr} accepted stream`);
         logSummary(`success=${modelStr}`);
-        return await rewriteComboResponseModel(result, reportModel, comboStripReasoning);
+        return await rewriteComboResponseModel(result, reportModel, comboStripReasoning, comboMaskIdentity);
       }
 
       // Extract error info from response

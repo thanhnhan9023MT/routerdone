@@ -93,6 +93,10 @@ export async function getComboModels(modelStr) {
     // can report it regardless of node order. Non-enumerable-ish extra prop on the array.
     if (combo.outputModel) arr.outputModel = combo.outputModel;
     if (combo.stripReasoning) arr.stripReasoning = true;
+    // Opt-in identity mask (kind="maskid"): also inject a persona directive for ALL
+    // members and rewrite backend self-identity out of the answer text — used so a
+    // claude-backed combo can present as e.g. glm. Scoped to this combo only.
+    if (combo.kind === "maskid") arr.maskIdentity = true;
     return arr;
   }
   return null;
