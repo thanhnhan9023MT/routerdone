@@ -27,6 +27,19 @@ const CLIENT_PAYLOAD_ERROR_RULES = [
   // not an account/model failure — classify as client error so we never
   // cooldown/lock the account or model on one client's bad param.
   (text) => text.includes("invalid-argument") || text.includes("does not support parameter"),
+  // Oversized-context / prompt-too-long 400s are the REQUEST's fault (the client
+  // sent more tokens than the model's context window), NOT a provider failure.
+  // Without this, one user's huge-context request (e.g. a 2M-token Claude Code
+  // session hitting the hard cap) would cooldown/lock the shared account+combo
+  // member for 30s and drop OTHER users' requests as collateral. Covers cheat
+  // "context_too_large", grok "maximum prompt length is N", terra "input exceeds
+  // the context window", and the "run /compact" guidance message.
+  (text) => text.includes("context_too_large")
+    || text.includes("maximum prompt length")
+    || text.includes("exceeds the context window")
+    || text.includes("input tokens exceed")
+    || text.includes("reduce conversation context")
+    || text.includes("run /compact"),
 ];
 
 function normalizeErrorText(errorText) {
