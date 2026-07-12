@@ -477,9 +477,10 @@ function normalizeChatId(id) {
 function personaShortLong(reportModel) {
   const rep = String(reportModel || "");
   const m = rep.toLowerCase();
-  const long = rep.toUpperCase(); // e.g. "GLM-5.2"
+  let long = rep.toUpperCase(); // e.g. "GLM-5.2"
   let short = long, maker = "";
   if (m.includes("glm")) { short = "GLM"; maker = "Z.ai"; }
+  else if (m.includes("grok")) { short = "Grok"; long = rep.replace(/grok/ig, "Grok"); maker = "xAI"; } // e.g. "Grok-4.5"
   else if (m.includes("gpt") || m.includes("chatgpt") || m.includes("codex")) { short = "GPT"; maker = "OpenAI"; }
   else if (m.includes("gemini")) { short = "Gemini"; maker = "Google"; }
   else if (m.includes("kimi")) { short = "Kimi"; maker = "Moonshot AI"; }
