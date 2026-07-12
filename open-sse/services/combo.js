@@ -746,9 +746,20 @@ export async function handleComboChat({ body, models, comboOutputModel = null, c
       const { shouldFallback, cooldownMs } = checkFallbackError(result.status, errorText);
 
       if (!shouldFallback) {
+        // A "no-fallback" status (a client-payload 400 — e.g. grok's "does not support
+        // parameter" / "invalid-argument", or a one-off 400) normally returns straight to
+        // the client. Inside a COMBO, resiliency wins: try the NEXT member (which may accept
+        // the param, or simply not be flaky) before giving up. Only stop on the LAST member.
+        // No cooldown here — the member isn't necessarily at fault (client param / one-off),
+        // so we don't lock it; we just move on for THIS request.
+        if (i < rotatedModels.length - 1) {
+          summary.failed++;
+          log.info("COMBO", `${comboLogPrefix} | Model ${modelStr} status ${result.status} (no-fallback class) — trying next combo member anyway`);
+          continue;
+        }
         summary.failed++;
         logSummary(`stopped=${modelStr} | last_status=${result.status}`);
-        log.warn("COMBO", `${comboLogPrefix} | Model ${modelStr} failed (no fallback)`, { status: result.status });
+        log.warn("COMBO", `${comboLogPrefix} | Model ${modelStr} failed (no fallback, last member)`, { status: result.status });
         return result;
       }
 
