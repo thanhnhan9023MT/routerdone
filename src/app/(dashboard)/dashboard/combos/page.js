@@ -71,7 +71,7 @@ export default function CombosPage() {
       const settingsData = settingsRes.ok ? await settingsRes.json() : {};
       
       // Only LLM combos here - webSearch/webFetch combos belong to media-providers/web
-      if (combosRes.ok) setCombos((combosData.combos || []).filter(c => !c.kind || c.kind === "llm"));
+      if (combosRes.ok) setCombos((combosData.combos || []).filter(c => !c.kind || c.kind === "llm" || c.kind === "maskid"));
       if (providersRes.ok) {
         setActiveProviders(providersData.connections || []);
       }
@@ -84,7 +84,7 @@ export default function CombosPage() {
       }
       setComboStrategies(settingsData.comboStrategies || {});
       writeCombosCache({
-        combos: (combosData.combos || []).filter(c => !c.kind || c.kind === 'llm'),
+        combos: (combosData.combos || []).filter(c => !c.kind || c.kind === 'llm' || c.kind === 'maskid'),
         activeProviders: providersRes.ok ? (providersData.connections || []) : [],
         comboStrategies: settingsData.comboStrategies || {},
         modelCaps,
