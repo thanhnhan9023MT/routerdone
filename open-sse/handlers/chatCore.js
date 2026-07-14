@@ -40,7 +40,7 @@ const DEFAULT_CONTEXT_GUARD_KEEP_RECENT = Math.max(1, Number(process.env.CONTEXT
  * @param {object} options.credentials - Provider credentials
  * @param {string} options.sourceFormatOverride - Override detected source format (e.g. "openai-responses")
  */
-export async function handleChatCore({ body, modelInfo, credentials, log, onCredentialsRefreshed, onRequestSuccess, onDisconnect, clientRawRequest, connectionId, userAgent, apiKey, ccFilterNaming, rtkEnabled, headroomEnabled, headroomUrl, headroomCompressUserMessages, headroomAdaptive, cavemanEnabled, cavemanLevel, ponytailEnabled, ponytailLevel, contextGuardEnabled, contextGuardMaxBytes, contextGuardKeepRecent, contextGuardHardCapTokens, sourceFormatOverride, providerThinking, routeInfo = null, streamTimeoutPolicy = null, streamPreflightTimeoutMs = null }) {
+export async function handleChatCore({ body, modelInfo, credentials, log, onCredentialsRefreshed, onRequestSuccess, onDisconnect, clientRawRequest, connectionId, userAgent, apiKey, ccFilterNaming, rtkEnabled, headroomEnabled, headroomUrl, headroomCompressModel, headroomCompressUserMessages, headroomAdaptive, cavemanEnabled, cavemanLevel, ponytailEnabled, ponytailLevel, contextGuardEnabled, contextGuardMaxBytes, contextGuardKeepRecent, contextGuardHardCapTokens, sourceFormatOverride, providerThinking, routeInfo = null, streamTimeoutPolicy = null, streamPreflightTimeoutMs = null }) {
   const { provider, model } = modelInfo;
   const requestStartTime = Date.now();
   const routeMode = routeInfo?.routeMode || (routeInfo?.comboName ? "combo" : "direct");
@@ -223,7 +223,7 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   headroomDiagnostics.ratioPercent = Math.round(headroomDecision.ratioPercent * 10) / 10;
   const headroomStats = headroomDecision.mode === "bypass"
     ? null
-    : await compressWithHeadroom(translatedBody, { enabled: true, url: headroomUrl, model: upstreamModel, format: finalFormat, compressUserMessages: headroomCompressUserMessages, timeoutMs: headroomDecision.timeoutMs, diagnostics: headroomDiagnostics });
+    : await compressWithHeadroom(translatedBody, { enabled: true, url: headroomUrl, model: headroomCompressModel?.trim() || upstreamModel, format: finalFormat, compressUserMessages: headroomCompressUserMessages, timeoutMs: headroomDecision.timeoutMs, diagnostics: headroomDiagnostics });
   const headroomLine = formatHeadroomSizeLog(headroomStats, headroomDiagnostics);
   if (headroomLine) log?.info?.("HEADROOM", headroomLine);
   if (headroomDecision.mode === "bypass") {

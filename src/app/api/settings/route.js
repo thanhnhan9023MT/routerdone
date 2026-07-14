@@ -82,6 +82,13 @@ export async function PATCH(request) {
       };
     }
 
+    if (Object.prototype.hasOwnProperty.call(body, "headroomCompressModel")) {
+      if (typeof body.headroomCompressModel !== "string" || body.headroomCompressModel.length > 200) {
+        return NextResponse.json({ error: "Invalid Headroom compression model" }, { status: 400 });
+      }
+      body.headroomCompressModel = body.headroomCompressModel.trim();
+    }
+
     if (Object.prototype.hasOwnProperty.call(body, "routerDoneContextBackup")) {
       const cfg = body.routerDoneContextBackup;
       if (!cfg || typeof cfg !== "object" || Array.isArray(cfg)) {

@@ -31,6 +31,7 @@ const DEFAULT_SETTINGS = {
   rtkEnabled: true,
   headroomEnabled: false,
   headroomUrl: DEFAULT_HEADROOM_URL,
+  headroomCompressModel: "",
   headroomCompressUserMessages: false,
   headroomAdaptive: {
     enabled: true,

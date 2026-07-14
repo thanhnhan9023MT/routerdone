@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import PropTypes from "prop-types";
@@ -38,6 +38,7 @@ export default function APIPageClient({ machineId }) {
   const [rtkEnabled, setRtkEnabledState] = useState(true);
   const [headroomEnabled, setHeadroomEnabled] = useState(false);
   const [headroomUrl, setHeadroomUrl] = useState("http://localhost:8787");
+  const [headroomCompressModel, setHeadroomCompressModel] = useState("");
   const [headroomCompressUserMessages, setHeadroomCompressUserMessages] = useState(false);
   const [headroomAdaptive, setHeadroomAdaptive] = useState({ enabled: true, softThresholdPercent: 70, mandatoryThresholdPercent: 85, compactThresholdPercent: 95, softTimeoutMs: 1500, mandatoryTimeoutMs: 3000 });
   const [headroomAdaptiveError, setHeadroomAdaptiveError] = useState("");
@@ -1358,6 +1359,13 @@ export default function APIPageClient({ machineId }) {
             <p className="text-sm text-text-muted mt-1">
               Adaptive compression via /v1/compress; small requests bypass the extra hop
             </p>
+            {headroomRunning && (
+              <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
+                <label className="text-text-muted" htmlFor="headroom-compress-model">Compression model</label>
+                <Input id="headroom-compress-model" value={headroomCompressModel} placeholder="Use routed model" onChange={(e) => setHeadroomCompressModel(e.target.value)} onBlur={() => patchSetting({ headroomCompressModel: headroomCompressModel.trim() })} className="w-56" />
+                <span className="text-text-muted">Optional: provider/model</span>
+              </div>
+            )}
             {headroomEnabled && headroomRunning && (
               <div className="mt-3 flex gap-2 flex-wrap items-center text-xs">
                 <label className="text-text-muted">Start %</label>
