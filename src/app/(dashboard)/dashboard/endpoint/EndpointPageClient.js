@@ -1559,8 +1559,7 @@ export default function APIPageClient({ machineId }) {
         selectedModel={(compactModelSlot === "fallback" ? contextBackup.compressFallbackModel : contextBackup.compressModel) || null}
         title="Select Context Compact Model"
         closeOnSelect={true}
-        includeCompactModels
-      />
+/>
       {/* Add Key Modal */}
       <Modal
         isOpen={showAddModal}

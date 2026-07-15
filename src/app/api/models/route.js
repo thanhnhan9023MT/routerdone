@@ -42,18 +42,6 @@ export async function GET() {
         models.push({ provider: alias, model: modelId, fullModel, alias: modelAliases[fullModel] || item.name || modelId, caps: { vision: c.vision, search: c.search, reasoning: c.reasoning } });
       }
     }
-    const compactFallbackModels = [{ provider: "routerdone", model: "deepseek-v4-flash", fullModel: "deepseek-v4-flash", alias: "deepseek-v4-flash", caps: {} }];
-    for (const item of compactFallbackModels) {
-      if (!models.some((m) => m.model === item.model || m.fullModel === item.fullModel)) models.push(item);
-    }
-    const seen = new Set(models.map((m) => m.fullModel));
-    for (const item of customModels || []) {
-      if (!item?.id || (item.type && item.type !== "llm") || !item.providerAlias) continue;
-      const fullModel = `${item.providerAlias}/${String(item.id).trim()}`;
-      if (seen.has(fullModel)) continue;
-      seen.add(fullModel);
-      models.push({ provider: item.providerAlias, model: item.id, fullModel, alias: item.name || item.id, caps: {} });
-    }
     for (const conn of connections || []) {
       const prefix = conn?.providerSpecificData?.prefix || conn?.provider;
       if (!prefix || !Array.isArray(conn?.models)) continue;

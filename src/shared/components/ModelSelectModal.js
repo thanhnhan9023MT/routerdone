@@ -33,7 +33,6 @@ export default function ModelSelectModal({
   kindFilter = null,
   addedModelValues = [],
   closeOnSelect = true,
-  includeCompactModels = false,
 }) {
   // Filter activeProviders by serviceKinds when kindFilter set (e.g. "webSearch", "webFetch")
   const filteredActiveProviders = useMemo(() => {
@@ -386,15 +385,6 @@ export default function ModelSelectModal({
       }
     });
 
-    if (includeCompactModels && !kindFilter) {
-      groups.compact = {
-        name: "Context compact models",
-        alias: "compact",
-        color: "#f97316",
-        models: [{ id: "deepseek-v4-flash", name: "deepseek-v4-flash", value: "deepseek-v4-flash", isCustom: true }],
-      };
-    }
-
     // Filter out disabled models per provider (disabled keyed by storage alias OR providerId)
     Object.entries(groups).forEach(([providerId, group]) => {
       const aliasKey = getProviderAlias(providerId);
@@ -408,7 +398,7 @@ export default function ModelSelectModal({
     });
 
     return groups;
-  }, [filteredActiveProviders, modelAliases, allProviders, providerNodes, customModels, disabledModels, kindFilter, activeProviders, mergeLiveModels, includeCompactModels]);
+  }, [filteredActiveProviders, modelAliases, allProviders, providerNodes, customModels, disabledModels, kindFilter, activeProviders, mergeLiveModels]);
 
   // Filter combos by search query (and hide combos when kindFilter is set — combos are LLM-only by design)
   const filteredCombos = useMemo(() => {
@@ -637,5 +627,5 @@ ModelSelectModal.propTypes = {
   kindFilter: PropTypes.string,
   addedModelValues: PropTypes.arrayOf(PropTypes.string),
   closeOnSelect: PropTypes.bool,
-  includeCompactModels: PropTypes.bool,
+
 };
