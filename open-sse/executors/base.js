@@ -106,10 +106,13 @@ export class BaseExecutor {
 
     // Merge default retry config with provider-specific config
     const retryConfig = { ...DEFAULT_RETRY_CONFIG, ...this.config.retry };
+    const internalRetriesEnabled = suppliedRequestContext?.disableInternalRetries !== true;
 
     // Schedule retry via retryConfig[statusKey]. Returns true when caller should `urlIndex--; continue`
     // response (optional) lets a subclass hook compute a dynamic delay (e.g. antigravity Retry-After).
     const tryRetry = async (urlIndex, statusKey, reason, response = null) => {
+      // Combo/fusion owns transient retries and model fallback.
+      if (!internalRetriesEnabled) return false;
       const { attempts, delayMs } = resolveRetryEntry(retryConfig[statusKey]);
       if (attempts <= 0 || retryAttemptsByUrl[urlIndex] >= attempts) return false;
       // Hook: subclass may derive delay from the response (headers/body). null → skip retry, use fallback.

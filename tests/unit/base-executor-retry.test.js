@@ -43,6 +43,20 @@ describe("BaseExecutor.execute — retry by status (config-driven)", () => {
     expect(out.response.status).toBe(502);
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });
+
+  it("does not retry transient status inside a combo attempt", async () => {
+    const ex = makeExec({ baseUrl: "https://x/api", retry: { 503: { attempts: 3, delayMs: 0 } } });
+    fetchMock.mockResolvedValue(res(503));
+    const out = await ex.execute({
+      model: "m",
+      body: {},
+      stream: true,
+      credentials: creds,
+      requestContext: { disableInternalRetries: true },
+    });
+    expect(out.response.status).toBe(503);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("BaseExecutor.execute — baseUrls fallback", () => {
