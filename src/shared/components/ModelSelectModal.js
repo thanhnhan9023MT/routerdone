@@ -320,6 +320,16 @@ export default function ModelSelectModal({
             value: `${nodePrefix}/${fullModel.replace(`${providerId}/`, "")}`,
           }));
 
+        const registryModels = availableModels
+          .filter((model) => model.provider === providerId || model.provider === nodePrefix)
+          .map((model) => ({
+            id: model.model || model.id,
+            name: model.alias || model.model || model.id,
+            value: model.fullModel || `${nodePrefix}/${model.model || model.id}`,
+            kind: getModelKind(model),
+            isLive: true,
+          }));
+
         const registeredCustomModels = customModels
           .filter((model) => model.providerAlias === providerId || model.providerAlias === nodePrefix)
           .map((model) => ({
