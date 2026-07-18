@@ -4,6 +4,12 @@ import { parseDataUri } from "../concerns/image.js";
 import { safeParseJSON } from "../concerns/json.js";
 import { ROLE, OPENAI_BLOCK } from "../schema/index.js";
 
+// Reasoning-model num_predict floor (== combo COMBO_REASONING_ALLOWANCE / euro
+// MAX_TOKENS_FLOOR). Ollama Cloud reasoning models empty their content at a low
+// num_predict because thinking eats the budget; raise it for those model families.
+const OLLAMA_NUM_PREDICT_FLOOR = 24576;
+const OLLAMA_REASONING_RE = /glm|kimi|deepseek|minimax|qwen|gpt-oss|nemotron|mistral|gemma/i;
+
 /**
  * Convert OpenAI request to Ollama format
  *
@@ -31,10 +37,19 @@ export function openaiToOllamaRequest(model, body, stream) {
     result.options.temperature = body.temperature;
   }
 
-  // Max tokens (Ollama uses num_predict)
+  // Max tokens (Ollama uses num_predict). Reasoning models (glm/gpt-oss/deepseek/qwen/
+  // nemotron/kimi/minimax/mistral) burn a low num_predict entirely on thinking → EMPTY
+  // content (finish_reason:"length"). Floor a present-but-too-low value for those models so
+  // the answer isn't starved — mirrors the combo reasoning floor / euro max_tokens floor.
+  // Only ever raises up, never lowers a user's larger budget; idempotent.
   if (body.max_tokens !== undefined) {
     result.options = result.options || {};
-    result.options.num_predict = body.max_tokens;
+    let numPredict = body.max_tokens;
+    if (OLLAMA_REASONING_RE.test(String(model || ""))
+        && Number.isInteger(numPredict) && numPredict > 0 && numPredict < OLLAMA_NUM_PREDICT_FLOOR) {
+      numPredict = OLLAMA_NUM_PREDICT_FLOOR;
+    }
+    result.options.num_predict = numPredict;
   }
 
   // Top_p

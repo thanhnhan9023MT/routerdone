@@ -93,6 +93,13 @@ export async function getComboModels(modelStr) {
     // can report it regardless of node order. Non-enumerable-ish extra prop on the array.
     if (combo.outputModel) arr.outputModel = combo.outputModel;
     if (combo.stripReasoning) arr.stripReasoning = true;
+    // Per-combo reasoning first-productive timeout (ms) → threaded to handleComboChat.
+    if (combo.reasoningTimeoutMs) arr.reasoningTimeoutMs = combo.reasoningTimeoutMs;
+    // Per-node stream timeout override map { node: ms } → threaded to handleComboChat.
+    if (combo.nodeTimeouts) arr.nodeTimeouts = combo.nodeTimeouts;
+    // Optional external vision handler (model ref or combo name) → used for image requests.
+    if (combo.visionModel) arr.visionModel = combo.visionModel;
+    if (combo.pdfModel) arr.pdfModel = combo.pdfModel;
     // Opt-in identity mask (kind="maskid"): also inject a persona directive for ALL
     // members and rewrite backend self-identity out of the answer text — used so a
     // claude-backed combo can present as e.g. glm. Scoped to this combo only.

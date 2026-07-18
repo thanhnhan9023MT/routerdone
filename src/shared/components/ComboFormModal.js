@@ -9,7 +9,7 @@ import ModelSelectModal from "./ModelSelectModal";
 const VALID_NAME_REGEX = /^[a-zA-Z0-9_.\-]+$/;
 
 // Inline editable model item
-function ModelItem({ index, model, isFirst, isLast, onEdit, onMoveUp, onMoveDown, onRemove }) {
+function ModelItem({ index, model, isFirst, isLast, onEdit, onMoveUp, onMoveDown, onRemove, timeoutSec, onTimeoutChange }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(model);
   const commit = () => {
@@ -32,6 +32,9 @@ function ModelItem({ index, model, isFirst, isLast, onEdit, onMoveUp, onMoveDown
         <div className="min-w-0 flex-1 cursor-text truncate rounded px-1.5 py-0.5 font-mono text-xs text-text-main hover:bg-black/5 dark:hover:bg-white/5"
           onClick={() => setEditing(true)} title="Click to edit">{model}</div>
       )}
+      <input type="number" min="1" max="300" value={timeoutSec} onChange={(e) => onTimeoutChange(e.target.value)}
+        placeholder="s" title="Timeout riêng cho model này (giây); trống = mặc định combo/global"
+        className="w-11 shrink-0 rounded border border-black/10 bg-white px-1 py-0.5 text-center font-mono text-[11px] text-text-main outline-none focus:border-primary dark:border-white/10 dark:bg-black/20" />
       <div className="flex shrink-0 items-center gap-0.5">
         <button onClick={onMoveUp} disabled={isFirst}
           className={`p-0.5 rounded ${isFirst ? "text-text-muted/20 cursor-not-allowed" : "text-text-muted hover:text-primary hover:bg-black/5 dark:hover:bg-white/5"}`} title="Move up">
@@ -57,6 +60,21 @@ export default function ComboFormModal({ isOpen, combo, onClose, onSave, activeP
     : "";
   const [name, setName] = useState(initialName);
   const [models, setModels] = useState(combo?.models || []);
+  // Per-combo reasoning first-productive timeout, edited in SECONDS (stored as ms).
+  // Blank → use the global default (120s). Only affects slow-reasoning members.
+  const [reasoningTimeoutSec, setReasoningTimeoutSec] = useState(
+    combo?.reasoningTimeoutMs ? String(Math.round(combo.reasoningTimeoutMs / 1000)) : ""
+  );
+  // Per-node stream timeout override, edited in SECONDS per model (stored as { model: ms }).
+  // Blank for a model → that node uses the combo/global default.
+  const [nodeTimeoutSec, setNodeTimeoutSec] = useState(() => {
+    const o = {}; const nt = combo?.nodeTimeouts || {};
+    for (const k in nt) o[k] = String(Math.round(nt[k] / 1000));
+    return o;
+  });
+  // External vision handler (model ref or combo name) used for image requests.
+  const [visionModel, setVisionModel] = useState(combo?.visionModel || "");
+  const [pdfModel, setPdfModel] = useState(combo?.pdfModel || "");
   const [showModelSelect, setShowModelSelect] = useState(false);
   const [saving, setSaving] = useState(false);
   const [nameError, setNameError] = useState("");
@@ -102,7 +120,18 @@ export default function ComboFormModal({ isOpen, combo, onClose, onSave, activeP
   const handleSave = async () => {
     if (!validateName(name)) return;
     setSaving(true);
-    await onSave({ name: forcePrefix + name.trim(), models });
+    // Seconds → ms; blank/invalid → null (server clamps to [4, 300]s).
+    const trimmedSec = String(reasoningTimeoutSec).trim();
+    const reasoningTimeoutMs = trimmedSec === "" || !(Number(trimmedSec) > 0)
+      ? null
+      : Math.round(Number(trimmedSec) * 1000);
+    // Per-node timeouts (seconds → ms), only for models still in the list.
+    const nodeTimeouts = {};
+    for (const m of models) {
+      const sec = String(nodeTimeoutSec[m] || "").trim();
+      if (sec !== "" && Number(sec) > 0) nodeTimeouts[m] = Math.round(Number(sec) * 1000);
+    }
+    await onSave({ name: forcePrefix + name.trim(), models, reasoningTimeoutMs, visionModel: visionModel.trim() || null, pdfModel: pdfModel.trim() || null, nodeTimeouts: Object.keys(nodeTimeouts).length ? nodeTimeouts : null });
     setSaving(false);
   };
 
@@ -146,7 +175,9 @@ export default function ComboFormModal({ isOpen, combo, onClose, onSave, activeP
                     onEdit={(v) => { const a = [...models]; a[index] = v; setModels(a); }}
                     onMoveUp={() => handleMoveUp(index)}
                     onMoveDown={() => handleMoveDown(index)}
-                    onRemove={() => handleRemoveModel(index)} />
+                    onRemove={() => handleRemoveModel(index)}
+                    timeoutSec={nodeTimeoutSec[model] || ""}
+                    onTimeoutChange={(v) => setNodeTimeoutSec((prev) => ({ ...prev, [model]: v }))} />
                 ))}
               </div>
             )}
@@ -155,6 +186,57 @@ export default function ComboFormModal({ isOpen, combo, onClose, onSave, activeP
               <span className="material-symbols-outlined text-[16px]">add</span>
               Add Model
             </button>
+          </div>
+
+          <div>
+            <label htmlFor="combo-reasoning-timeout" className="mb-1 flex items-center gap-1 text-sm font-medium">
+              <span className="material-symbols-outlined text-[15px] text-text-muted">timer</span>
+              Timeout reasoning
+              <span className="text-[10px] font-normal text-text-muted">(giây)</span>
+            </label>
+            <div className="flex items-stretch">
+              <input id="combo-reasoning-timeout" type="number" min="4" max="300" step="1" inputMode="numeric"
+                value={reasoningTimeoutSec}
+                onChange={(e) => setReasoningTimeoutSec(e.target.value)}
+                placeholder="120 (mặc định)"
+                className="min-w-0 flex-1 rounded-l border border-r-0 border-black/10 bg-white px-2 py-1.5 text-sm outline-none focus:border-primary dark:border-white/10 dark:bg-black/20" />
+              <span className="inline-flex items-center rounded-r border border-black/10 bg-black/[0.04] px-2 font-mono text-xs text-text-muted dark:border-white/10 dark:bg-white/[0.04]">giây</span>
+            </div>
+            <p className="mt-0.5 text-[10px] text-text-muted">
+              Thời gian chờ member <span className="font-medium">reasoning</span> ra nội dung đầu trước khi rơi fallback. Trống = mặc định 120s. Chỉ áp cho model nghĩ lâu (fable/glm/claude…), không đụng fallback nhanh như grok. Giới hạn 4–300s.
+            </p>
+          </div>
+
+          <div>
+            <label htmlFor="combo-vision-model" className="mb-1 flex items-center gap-1 text-sm font-medium">
+              <span className="material-symbols-outlined text-[15px] text-text-muted">visibility</span>
+              Vision model
+              <span className="text-[10px] font-normal text-text-muted">(external)</span>
+            </label>
+            <input id="combo-vision-model" type="text"
+              value={visionModel}
+              onChange={(e) => setVisionModel(e.target.value)}
+              placeholder="vd: kimi-k2.7-vision  hoặc  ollama/kimi-k2.7-code"
+              className="w-full rounded border border-black/10 bg-white px-2 py-1.5 font-mono text-sm outline-none focus:border-primary dark:border-white/10 dark:bg-black/20" />
+            <p className="mt-0.5 text-[10px] text-text-muted">
+              Khi request <span className="font-medium">có ảnh</span>, dùng model/combo này xử lý vision (thử trước các member). Nhập <span className="font-mono">prefix/model</span> hoặc tên combo vision. Trống = dùng vision của member trong combo.
+            </p>
+          </div>
+
+          <div>
+            <label htmlFor="combo-pdf-model" className="mb-1 flex items-center gap-1 text-sm font-medium">
+              <span className="material-symbols-outlined text-[15px] text-text-muted">picture_as_pdf</span>
+              PDF model
+              <span className="text-[10px] font-normal text-text-muted">(external)</span>
+            </label>
+            <input id="combo-pdf-model" type="text"
+              value={pdfModel}
+              onChange={(e) => setPdfModel(e.target.value)}
+              placeholder="vd: cheat/claude-opus-4-8  hoặc  euro/…/gpt-5.6-terra"
+              className="w-full rounded border border-black/10 bg-white px-2 py-1.5 font-mono text-sm outline-none focus:border-primary dark:border-white/10 dark:bg-black/20" />
+            <p className="mt-0.5 text-[10px] text-text-muted">
+              Khi request <span className="font-medium">có PDF/document</span>, dùng model/combo này (thử trước các member). Trống = dùng member combo.
+            </p>
           </div>
 
           <div className="flex flex-col gap-2 pt-1 sm:flex-row">

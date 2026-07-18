@@ -65,6 +65,9 @@ const MAX_TOKENS_FLOOR_PROVIDERS = {
   // EuroModels (euromodels.xyz) — reasoning models empty at low max_tokens.
   "openai-compatible-chat-45f27de6-ba0c-4662-b05a-03d0af28255f":
     /glm|kimi|deepseek|minimax|qwen|claude|sonnet|opus|haiku|fable/i,
+  // NOTE: Ollama (format="ollama") is floored in the translator, not here — its
+  // openai→ollama translation (max_tokens → options.num_predict) runs before this strip,
+  // so raising max_tokens here is a no-op. See translator/request/openai-to-ollama.js.
 };
 
 function raiseMaxTokensFloor(provider, model, body) {

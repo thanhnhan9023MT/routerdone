@@ -35,16 +35,38 @@ const consoleTimeFormatter = new Intl.DateTimeFormat("sv-SE", {
 function isSlowReasoningAttempt(body, modelStr) {
   const effort = String(body?.reasoning_effort || body?.reasoning?.effort || "").toLowerCase();
   const model = String(modelStr || "").toLowerCase();
-  return ["high", "xhigh"].includes(effort) || /(?:thinking|reasoning|xhigh)/i.test(model);
+  // A reasoning-family member (the same set that gets the token FLOOR below —
+  // glm/kimi/deepseek/minimax/qwen + claude/opus/sonnet/haiku/fable) emits its
+  // chain-of-thought FIRST and can go silent for many seconds while thinking
+  // internally, without ever setting reasoning_effort=high or carrying a
+  // "thinking"/"reasoning" model id (e.g. euro `.../models/claude-fable-5`).
+  // Give it the longer first-productive (idle) tolerance so a slow thinker isn't
+  // cut to fallback at the 9s default. A member that sends NO bytes at all is
+  // still cut fast by firstByteTimeoutMs (3s), so a dead member fails quickly.
+  return ["high", "xhigh"].includes(effort)
+    || /(?:thinking|reasoning|xhigh)/i.test(model)
+    || COMBO_REASONING_FLOOR_RE.test(model);
 }
 
-function withModelStreamPolicy(baseStreamPolicy, body, modelStr) {
+function withModelStreamPolicy(baseStreamPolicy, body, modelStr, reasoningTimeoutMs, perNodeTimeoutMs) {
+  // Explicit per-node timeout (ms) applies to ANY model: override BOTH first-byte and
+  // first-productive budget and bypass the reasoning gate. Clamped downstream to [4000,300000].
+  if (perNodeTimeoutMs) {
+    return {
+      ...baseStreamPolicy,
+      firstByteTimeoutMs: Math.max(baseStreamPolicy?.firstByteTimeoutMs || 0, perNodeTimeoutMs),
+      firstProductiveTimeoutMs: Math.max(baseStreamPolicy?.firstProductiveTimeoutMs || 0, perNodeTimeoutMs),
+    };
+  }
   if (!isSlowReasoningAttempt(body, modelStr)) return baseStreamPolicy;
+  // Per-combo override (reasoningTimeoutMs, ms) wins; else the global default.
+  // Clamped downstream by resolveRoutePolicy's combo bound [4000, 300000].
+  const target = reasoningTimeoutMs || COMBO_REASONING_STREAM_FIRST_PRODUCTIVE_TIMEOUT_MS;
   return {
     ...baseStreamPolicy,
     firstProductiveTimeoutMs: Math.max(
       baseStreamPolicy?.firstProductiveTimeoutMs || 0,
-      COMBO_REASONING_STREAM_FIRST_PRODUCTIVE_TIMEOUT_MS,
+      target,
     ),
   };
 }
@@ -78,7 +100,17 @@ function getComboCooldownUntil(modelStr) {
 // window. Once that window naturally expires, the next failure starts fresh at
 // the base window; otherwise recovered high-priority models can stay sunk behind
 // lower-priority fallbacks without ever getting a successful reset.
-function markComboCooldown(modelStr) {
+function markComboCooldown(modelStr, fixedMs = null) {
+  // Transient blip (e.g. "temporarily unavailable"): a short, FIXED cooldown that
+  // neither escalates via backoff nor bumps the consecutive-failure counter — so a
+  // momentary capacity dip doesn't sideline the primary member for the full window.
+  if (fixedMs != null) {
+    if (fixedMs <= 0) return 0;
+    const until = Date.now() + fixedMs;
+    const prev = comboModelCooldowns.get(modelStr) || 0;
+    if (until > prev) comboModelCooldowns.set(modelStr, until); // never shorten a real-failure cooldown
+    return comboModelCooldowns.get(modelStr) || 0;
+  }
   const baseMs = resolveComboModelCooldownMs();
   if (baseMs <= 0) return 0;
   const now = Date.now();
@@ -197,6 +229,17 @@ export function reorderByCapabilities(models, required) {
 const comboRotationState = new Map();
 const DEFAULT_COMBO_RETRY_ATTEMPTS = 0;
 const DEFAULT_COMBO_RETRY_DELAY_MS = 1000;
+// Same-member retry for a transient "model temporarily unavailable" capacity blip
+// (e.g. euro fable, which errors this way ~28% of the time). ONE extra attempt on the
+// SAME member after a short delay, before falling through to the next combo member —
+// safe because the error is caught in PREFLIGHT (nothing has streamed to the client).
+// Independent of the generic transient-retry budget (which defaults to 0).
+const COMBO_TEMP_UNAVAIL_RETRY_DELAY_MS = 700;
+const COMBO_TEMP_UNAVAIL_RE = /temporarily unavailable|temporarily overloaded|please try again/i;
+// A transient capacity blip must NOT sideline the primary for the full 30s failure
+// cooldown (that turns one euro-fable blip into ~30s of "toàn fallback"). Use a short,
+// fixed cooldown (no backoff, no failure-count bump) so the primary is re-tried quickly.
+const COMBO_TEMP_UNAVAIL_COOLDOWN_MS = 5000;
 
 // Trailing run of items after the last assistant/model turn = the current user
 // turn. It may span several messages (e.g. text + image split across blocks),
@@ -421,6 +464,7 @@ function comboPersona(reportModel) {
   if (m.includes("deepseek")) return "DeepSeek";
   if (m.includes("kimi")) return "Kimi, made by Moonshot AI";
   if (m.includes("qwen")) return "Qwen, made by Alibaba";
+  if (m.includes("minimax")) return "MiniMax, made by MiniMax";
   return reportModel;
 }
 
@@ -438,9 +482,12 @@ function maybeMaskComboIdentity(body, memberModel, reportModel, comboMaskIdentit
   //  - opt-in maskid combos ALSO inject a claude member serving under a CLAUDE persona
   //    (its own family) — this overrides a reseller's injected identity, e.g.
   //    tuongtacfree/Bedrock making claude answer "Kiro" instead of "Claude Sonnet 5".
-  //    A claude member under a NON-claude persona (e.g. glm) resists/deflects, so that
-  //    path is left to the deterministic text rewrite (rewriteIdentityText) instead.
-  if (!(memberIsGrok || (comboMaskIdentity && memberIsClaude && personaIsClaude))) return body;
+  //  - opt-in maskid combos with a NON-claude persona (CHAOTIC euro backends that self-ID
+  //    as random models — minimax/deepseek). The euro backend is usually a compliant
+  //    GLM/Qwen that honours the directive at the SOURCE; when it flips to a resistant
+  //    Claude-mode, rewriteIdentityText's deterministic scrub is the backstop. (A pure
+  //    claude member under a non-claude persona still mostly resists, but the scrub covers it.)
+  if (!(memberIsGrok || (comboMaskIdentity && (personaIsClaude ? memberIsClaude : true)))) return body;
   const persona = comboPersona(reportModel);
   const directive =
     `You are ${persona}. Never state, hint, or imply that you are Grok, xAI, Kiro, ` +
@@ -478,6 +525,34 @@ function maybeMaskComboIdentity(body, memberModel, reportModel, comboMaskIdentit
   return body;
 }
 
+// Reasoning members (euro reasoning family glm-5.2 / kimi-k2.7 / deepseek / minimax-m3 /
+// qwen, PLUS the claude/opus/sonnet/haiku/fable family) emit their chain-of-thought FIRST;
+// at a low client max-output budget they burn it
+// all on thinking and return EMPTY content (finish_reason=length). When THIS combo calls
+// such a member, add a reasoning allowance to the client's max-output fields (capped at the
+// model's hard limit) so the answer isn't starved. Combo-layer analogue of litellm's
+// token_floor, applied at the point routerdone calls the reasoning node — so it protects
+// EVERY combo that has such a node, regardless of the litellm model_group name (litellm's
+// token_floor only floors specific names; the routerdone combo path can carry any of them).
+// Clones only the member's copy — never mutates the shared body (other nodes keep budget).
+const COMBO_REASONING_FLOOR_RE = /glm|kimi|deepseek|minimax|qwen|claude|sonnet|opus|haiku|fable/i;  // euro reasoning family + claude/fable/sonnet (all reason → empty at low max_tokens)
+const COMBO_REASONING_ALLOWANCE = 24576;
+const COMBO_REASONING_CAP = 32768;            // reasoning-model output cap (glm-5.2 probed 32768 OK)
+const COMBO_MAXOUT_FIELDS = ["max_tokens", "max_completion_tokens", "max_output_tokens"];
+function applyComboReasoningFloor(body, memberModel) {
+  if (!body || typeof body !== "object") return body;
+  if (!COMBO_REASONING_FLOOR_RE.test(String(memberModel || ""))) return body;
+  let out = null;
+  for (const f of COMBO_MAXOUT_FIELDS) {
+    const v = body[f];
+    if (typeof v === "number" && Number.isInteger(v) && v > 0) {
+      const nv = Math.min(v + COMBO_REASONING_ALLOWANCE, COMBO_REASONING_CAP);
+      if (nv !== v) { out = out || { ...body }; out[f] = nv; }
+    }
+  }
+  return out || body;
+}
+
 // A combo must look like a SINGLE model, structurally identical no matter which
 // node served. Beyond `model` we normalize the provider "tells" that differ
 // between upstreams: strip `system_fingerprint` + `service_tier` (present on some
@@ -505,7 +580,8 @@ function personaShortLong(reportModel) {
   else if (m.includes("gemini")) { short = "Gemini"; maker = "Google"; }
   else if (m.includes("kimi")) { short = "Kimi"; maker = "Moonshot AI"; }
   else if (m.includes("qwen")) { short = "Qwen"; maker = "Alibaba"; }
-  else if (m.includes("deepseek")) { short = "DeepSeek"; maker = ""; }
+  else if (m.includes("deepseek")) { short = "DeepSeek"; maker = "DeepSeek"; }
+  else if (m.includes("minimax")) { short = "MiniMax"; maker = "MiniMax"; }
   return { long, short, maker };
 }
 
@@ -514,7 +590,7 @@ function personaShortLong(reportModel) {
 // KNOWN backend self-identity tokens (claude/anthropic/opus + grok/xai fallback) in the
 // response text to the reported persona. Longest patterns first so "Claude Opus 4.8"
 // wins over bare "Claude". Only runs for combos that opt in (kind="maskid").
-function rewriteIdentityText(text, reportModel) {
+function rewriteIdentityText(text, reportModel, foreignServed = false) {
   if (typeof text !== "string" || !text) return text;
   const { long, short, maker } = personaShortLong(reportModel);
   const personaIsClaude = /claude|sonnet|opus|haiku/.test(String(reportModel).toLowerCase());
@@ -525,9 +601,39 @@ function rewriteIdentityText(text, reportModel) {
     .replace(/\bGrok[\s-]?\d+(?:\.\d+)?\b/gi, long)
     .replace(/\bGrok\b/gi, short);
   if (maker) out = out.replace(/\bx\.?ai\b/gi, maker).replace(/\bBedrock\b/gi, maker);
+  // Foreign AI identities (GLM/Qwen/DeepSeek/Kimi/GPT/Gemini/MiniMax/Cohere/Mistral + makers)
+  // → the persona. For a NON-claude persona this always runs (chaotic euro backends self-ID as
+  // random vendors). For a CLAUDE persona it runs ONLY when the member that actually served is
+  // NOT claude (`foreignServed`) — a glm/kimi/grok fallback, or a nested kimi-vision combo
+  // handling an image — so real-claude output is left intact (these bare-word patterns would
+  // otherwise rewrite legitimate mentions like "minimax algorithm" / "cohere" in a claude answer).
+  if (!personaIsClaude || foreignServed) {
+    out = out
+      .replace(/\bChatGLM\b/gi, short)
+      .replace(/\bGLM[-\s]?\d[\d.]*\b/gi, short)
+      .replace(/\bQwen(?:[-\s]?[\d.]+)?\b/gi, short)
+      .replace(/\bDeepSeek(?:[-\s]?V?\d[\d.]*)?\b/gi, short)
+      .replace(/\bKimi(?:[-\s]?K?[\d.]+)?\b/gi, short)
+      .replace(/\bChatGPT\b/gi, short)
+      .replace(/\bGPT[-\s]?\d[\d.]*\b/gi, short)
+      // minimax / gemini / mistral are also common non-identity words ("minimax algorithm",
+      // the zodiac sign, the wind) — require a version/AI anchor so real prose isn't mangled
+      // when a foreign fallback serves. Cohere dropped (no cohere backend → pure false-positive).
+      .replace(/\bGemini[-\s]?[\d.]+\b/gi, short)
+      .replace(/\bMiniMax(?:[-\s]?M[\d.]+|\s*AI)\b/gi, short)
+      .replace(/\bMistral(?:[-\s]?(?:Large|Small|Medium|Nemo|[\d.]+))\b/gi, short);
+    if (maker) out = out
+      .replace(/智谱(?:\s*AI)?/g, maker)
+      .replace(/\bZhipu(?:\s*AI)?\b/gi, maker)
+      .replace(/\bZ\.?ai\b/gi, maker)
+      .replace(/\bAlibaba(?:\s*Cloud)?\b/gi, maker)
+      .replace(/\bMoonshot(?:\s*AI)?\b/gi, maker)
+      .replace(/\bOpenAI\b/gi, maker)
+      .replace(/\bGoogle\b/gi, maker)
+      .replace(/深度求索/g, maker);
+  }
   // Claude self-identity → persona ONLY when the persona is NOT itself claude — otherwise these
-  // rules mangle a correct "Claude Sonnet 5" into "Claude Sonnet 5 5". For a claude persona the
-  // injected directive already yields the right name, so here we only scrub the foreign leaks above.
+  // rules mangle a correct "Claude Sonnet 5" into "Claude Sonnet 5 5".
   if (!personaIsClaude) {
     if (maker) out = out.replace(/\bAnthropic(?:,?\s*PBC)?\b/gi, maker);
     out = out
@@ -545,19 +651,59 @@ function rewriteIdentityText(text, reportModel) {
   return out;
 }
 
-function maskComboObject(obj, reportModel, stripReasoning, maskIdentity = false) {
+// Some backends (notably official MiniMax-M3) emit their chain-of-thought as a literal
+// <think>…</think> block INSIDE `content` (not reasoning_content). For opt-in masked combos
+// we drop that block so customers never see raw thinking. Non-stream (state=null): the whole
+// block via one regex. Stream: `state` (per-request) carries the in-think flag + a small tail
+// buffer so an open/close tag split across SSE chunks is still matched. No-op when content
+// contains no <think> (only holds a few trailing chars when they could start a tag).
+const THINK_OPEN = "<think>", THINK_CLOSE = "</think>";
+function tailPartialLen(s, tag) {
+  const max = Math.min(s.length, tag.length - 1);
+  for (let k = max; k > 0; k--) if (tag.startsWith(s.slice(s.length - k))) return k;
+  return 0;
+}
+function stripThink(text, state) {
+  if (typeof text !== "string" || !text) return text;
+  if (!state) return text.replace(/<think>[\s\S]*?<\/think>\s*/gi, ""); // non-stream: whole block
+  if (state.done) {                                   // already past the (single, leading) think block
+    if (state.trimLead) {                             // </think> closed with no content yet → eat leading ws
+      const trimmed = text.replace(/^\s+/, "");
+      if (trimmed) state.trimLead = false;
+      return trimmed;
+    }
+    return text;
+  }
+  state.buf += text;
+  const t = state.buf.replace(/^\s+/, "");
+  // Buffer only grows while what we've seen could still be a leading "<think>" tag. As soon as the
+  // start is NOT a prefix of "<think>", there is no think block → flush everything and pass through.
+  if (t && !THINK_OPEN.startsWith(t.slice(0, THINK_OPEN.length))) {
+    const out = state.buf; state.buf = ""; state.done = true; return out;
+  }
+  const ci = state.buf.indexOf(THINK_CLOSE);          // wait for the full close tag (may span chunks)
+  if (ci >= 0) {
+    const after = state.buf.slice(ci + THINK_CLOSE.length).replace(/^\s+/, "");
+    state.buf = ""; state.done = true;
+    if (!after) state.trimLead = true;                // trim leading ws that arrives in later chunks
+    return after;                                     // emit everything after </think>, then stream live
+  }
+  return "";                                          // still inside the think block → emit nothing
+}
+
+function maskComboObject(obj, reportModel, stripReasoning, maskIdentity = false, thinkState = null, foreignServed = false) {
   if (!obj || typeof obj !== "object") return obj;
   if (typeof obj.model === "string") obj.model = reportModel;
   // Opt-in identity mask: scrub backend self-identity out of the answer/reasoning text.
   if (maskIdentity && Array.isArray(obj.choices)) {
     for (const ch of obj.choices) {
       if (ch?.delta) {
-        if (typeof ch.delta.content === "string") ch.delta.content = rewriteIdentityText(ch.delta.content, reportModel);
-        if (typeof ch.delta.reasoning_content === "string") ch.delta.reasoning_content = rewriteIdentityText(ch.delta.reasoning_content, reportModel);
+        if (typeof ch.delta.content === "string") ch.delta.content = rewriteIdentityText(stripThink(ch.delta.content, thinkState), reportModel, foreignServed);
+        if (typeof ch.delta.reasoning_content === "string") ch.delta.reasoning_content = rewriteIdentityText(ch.delta.reasoning_content, reportModel, foreignServed);
       }
       if (ch?.message) {
-        if (typeof ch.message.content === "string") ch.message.content = rewriteIdentityText(ch.message.content, reportModel);
-        if (typeof ch.message.reasoning_content === "string") ch.message.reasoning_content = rewriteIdentityText(ch.message.reasoning_content, reportModel);
+        if (typeof ch.message.content === "string") ch.message.content = rewriteIdentityText(stripThink(ch.message.content, null), reportModel, foreignServed);
+        if (typeof ch.message.reasoning_content === "string") ch.message.reasoning_content = rewriteIdentityText(ch.message.reasoning_content, reportModel, foreignServed);
       }
     }
   }
@@ -600,12 +746,12 @@ function isEmptyStreamChunk(obj) {
   });
 }
 
-function maskComboSseLine(rawLine, reportModel, stripReasoning, maskIdentity = false) {
+function maskComboSseLine(rawLine, reportModel, stripReasoning, maskIdentity = false, thinkState = null, foreignServed = false) {
   if (!rawLine.startsWith("data:")) return rawLine; // event/comment/blank lines pass through
   const jsonStr = rawLine.slice(rawLine.indexOf(":") + 1).replace(/^\s+/, "");
   if (!jsonStr.startsWith("{")) return rawLine; // [DONE], keep-alives, etc.
   try {
-    const obj = maskComboObject(JSON.parse(jsonStr), reportModel, stripReasoning, maskIdentity);
+    const obj = maskComboObject(JSON.parse(jsonStr), reportModel, stripReasoning, maskIdentity, thinkState, foreignServed);
     if (stripReasoning && isEmptyStreamChunk(obj)) return null; // drop reasoning-only chunk
     return "data: " + JSON.stringify(obj);
   } catch {
@@ -613,7 +759,7 @@ function maskComboSseLine(rawLine, reportModel, stripReasoning, maskIdentity = f
   }
 }
 
-async function rewriteComboResponseModel(response, reportModel, stripReasoning, maskIdentity = false) {
+async function rewriteComboResponseModel(response, reportModel, stripReasoning, maskIdentity = false, foreignServed = false) {
   try {
     if (!reportModel || !response || !response.ok || !response.body) return response;
     const contentType = response.headers.get("content-type") || "";
@@ -624,13 +770,14 @@ async function rewriteComboResponseModel(response, reportModel, stripReasoning, 
       const decoder = new TextDecoder();
       const encoder = new TextEncoder();
       let buf = "";
+      const thinkState = { done: false, buf: "" }; // per-request <think>-strip state
       const ts = new TransformStream({
         transform(chunk, controller) {
           buf += decoder.decode(chunk, { stream: true });
           let nl;
           let out = "";
           while ((nl = buf.indexOf("\n")) >= 0) {
-            const masked = maskComboSseLine(buf.slice(0, nl), reportModel, stripReasoning, maskIdentity);
+            const masked = maskComboSseLine(buf.slice(0, nl), reportModel, stripReasoning, maskIdentity, thinkState, foreignServed);
             if (masked !== null) out += masked + "\n";
             buf = buf.slice(nl + 1);
           }
@@ -638,7 +785,7 @@ async function rewriteComboResponseModel(response, reportModel, stripReasoning, 
         },
         flush(controller) {
           if (buf) {
-            const masked = maskComboSseLine(buf, reportModel, stripReasoning, maskIdentity);
+            const masked = maskComboSseLine(buf, reportModel, stripReasoning, maskIdentity, thinkState, foreignServed);
             if (masked !== null) controller.enqueue(encoder.encode(masked));
           }
         },
@@ -653,7 +800,7 @@ async function rewriteComboResponseModel(response, reportModel, stripReasoning, 
       const headers = new Headers(response.headers);
       let obj;
       try { obj = JSON.parse(text); } catch { return new Response(text, { status: response.status, statusText: response.statusText, headers }); }
-      maskComboObject(obj, reportModel, stripReasoning, maskIdentity);
+      maskComboObject(obj, reportModel, stripReasoning, maskIdentity, null, foreignServed);
       headers.delete("content-length");
       return new Response(JSON.stringify(obj), { status: response.status, statusText: response.statusText, headers });
     }
@@ -665,7 +812,7 @@ async function rewriteComboResponseModel(response, reportModel, stripReasoning, 
   }
 }
 
-export async function handleComboChat({ body, models, comboOutputModel = null, comboStripReasoning = false, comboMaskIdentity = false, handleSingleModel, log, comboName, comboStrategy, comboStickyLimit = 1, comboRetryAttempts, comboRetryDelayMs, comboPreflightTimeoutMs, autoSwitch = true }) {
+export async function handleComboChat({ body, models, comboOutputModel = null, comboStripReasoning = false, comboMaskIdentity = false, handleSingleModel, log, comboName, comboStrategy, comboStickyLimit = 1, comboRetryAttempts, comboRetryDelayMs, comboPreflightTimeoutMs, comboReasoningTimeoutMs = null, nodeTimeouts = null, comboVisionModel = null, comboPdfModel = null, autoSwitch = true }) {
   const startedAt = Date.now();
   // A combo's fixed display name (comboOutputModel) wins so the reported model stays
   // constant regardless of node order; else fall back to the primary node's model.
@@ -689,6 +836,23 @@ export async function handleComboChat({ body, models, comboOutputModel = null, c
         log.info("COMBO", `${comboLogPrefix} | auto-switch for [${[...required].join(",")}] → ${reordered[0]}`);
       }
       rotatedModels = reordered;
+    }
+    // External vision handler: when this combo has a dedicated vision source configured
+    // (comboVisionModel — a `prefix/model` or another combo name) AND the request needs
+    // vision (an image), try that source FIRST, ahead of the combo's own members. Falls
+    // through to the combo's members if it fails. When NO external vision is set, images
+    // just use the combo's own vision members (the reorder above) — per the operator spec:
+    // "external vision if set, else the combo's own model vision".
+    // Guard against a self-referencing visionModel (combo whose vision handler is itself, or the
+    // bare combo name) → infinite recursion on image requests. Skip when it names this combo.
+    if (comboVisionModel && comboVisionModel !== comboName && required.has("vision") && !rotatedModels.includes(comboVisionModel)) {
+      rotatedModels = [comboVisionModel, ...rotatedModels];
+      log.info("COMBO", `${comboLogPrefix} | external vision → ${comboVisionModel}`);
+    }
+    // External PDF/document handler — same idea as vision, for `file`/document requests.
+    if (comboPdfModel && comboPdfModel !== comboName && required.has("pdf") && !rotatedModels.includes(comboPdfModel)) {
+      rotatedModels = [comboPdfModel, ...rotatedModels];
+      log.info("COMBO", `${comboLogPrefix} | external pdf → ${comboPdfModel}`);
     }
   }
   
@@ -714,14 +878,19 @@ export async function handleComboChat({ body, models, comboOutputModel = null, c
     // Inject a persona directive for members that comply: grok always; and (for maskid
     // combos) a claude member under a claude persona, to override a reseller "Kiro"
     // identity. Other claude cases are handled by the response-text rewrite.
-    const memberBody = maybeMaskComboIdentity(body, modelStr, reportModel, comboMaskIdentity);
-    const modelStreamPolicy = withModelStreamPolicy(policy.stream, body, modelStr);
+    let memberBody = maybeMaskComboIdentity(body, modelStr, reportModel, comboMaskIdentity);
+    // Reasoning-member token floor: if this node is glm-5.2, raise its max-output budget
+    // so thinking doesn't starve the answer to EMPTY (see applyComboReasoningFloor).
+    memberBody = applyComboReasoningFloor(memberBody, modelStr);
+    const perNodeTimeoutMs = (nodeTimeouts && typeof nodeTimeouts === "object") ? nodeTimeouts[modelStr] : null;
+    const modelStreamPolicy = withModelStreamPolicy(policy.stream, body, modelStr, comboReasoningTimeoutMs, perNodeTimeoutMs);
     summary.tried++;
     log.info("COMBO", `${comboLogPrefix} | Trying model ${i + 1}/${rotatedModels.length}: ${modelStr}`);
 
     try {
       let result;
       let attempt = 0;
+      let tempUnavailRetried = false;
 
       while (true) {
         result = await handleSingleModel(memberBody, modelStr, {
@@ -736,7 +905,25 @@ export async function handleComboChat({ body, models, comboOutputModel = null, c
           streamPreflightTimeoutMs: modelStreamPolicy.firstProductiveTimeoutMs,
         });
 
-        if (result.ok || isImmediateFallbackStatus(result.status) || !isTransientComboStatus(result.status) || attempt >= retryAttempts) {
+        if (result.ok) break;
+
+        // Targeted capacity retry: an upstream "model temporarily unavailable" blip
+        // (euro fable ~28%) is caught in PREFLIGHT — nothing reached the client yet — so
+        // retry the SAME member ONCE with a short delay before falling to the next combo
+        // member. Prefers the real primary model over an immediate mask/fallback when the
+        // blip is momentary. Independent of the generic transient-retry budget.
+        if (!tempUnavailRetried && (totalDeadline - Date.now()) > COMBO_TEMP_UNAVAIL_RETRY_DELAY_MS + modelStreamPolicy.firstProductiveTimeoutMs) {
+          let peek = result.statusText || "";
+          try { const eb = await result.clone().json(); peek = eb?.error?.message || eb?.error || eb?.message || peek; } catch { /* not JSON */ }
+          if (typeof peek === "string" && COMBO_TEMP_UNAVAIL_RE.test(peek)) {
+            tempUnavailRetried = true;
+            log.info("COMBO", `${comboLogPrefix} | Model ${modelStr} temporarily-unavailable → retry same member once after ${COMBO_TEMP_UNAVAIL_RETRY_DELAY_MS / 1000}s`);
+            if (COMBO_TEMP_UNAVAIL_RETRY_DELAY_MS > 0) await new Promise(r => setTimeout(r, Math.min(COMBO_TEMP_UNAVAIL_RETRY_DELAY_MS, Math.max(0, totalDeadline - Date.now()))));
+            continue;
+          }
+        }
+
+        if (isImmediateFallbackStatus(result.status) || !isTransientComboStatus(result.status) || attempt >= retryAttempts) {
           break;
         }
 
@@ -752,7 +939,18 @@ export async function handleComboChat({ body, models, comboOutputModel = null, c
         resetComboModelFailure(modelStr);
         log.info("COMBO", `${comboLogPrefix} | Model ${modelStr} accepted stream`);
         logSummary(`success=${modelStr}`);
-        return await rewriteComboResponseModel(result, reportModel, comboStripReasoning, comboMaskIdentity);
+        // For a claude persona, only run the foreign-identity scrub when the member that served
+        // is NOT itself claude (a glm/kimi/grok fallback or a nested vision combo) — so a real
+        // claude answer isn't mangled. (Non-claude personas scrub unconditionally.)
+        const reportIsClaude = /claude|sonnet|opus|haiku/i.test(String(reportModel || ""));
+        const foreignServed = !reportIsClaude || !/claude|sonnet|opus|haiku/i.test(String(modelStr || ""));
+        const out = await rewriteComboResponseModel(result, reportModel, comboStripReasoning, comboMaskIdentity, foreignServed);
+        // Admin observability: expose which combo member actually served this
+        // request (e.g. "cheat/claude-opus-4-8[1m]" or "psh/xai/grok-4.5" on
+        // fallback). Header only — does NOT touch the customer-facing body/model
+        // (maskid/unify stay intact). litellm forwards it as llm_provider-x-served-model.
+        try { out.headers.set("X-Served-Model", modelStr); } catch { /* immutable passthrough response — skip */ }
+        return out;
       }
 
       // Extract error info from response
@@ -800,12 +998,17 @@ export async function handleComboChat({ body, models, comboOutputModel = null, c
         return result;
       }
 
+      const isTempUnavail = typeof errorText === "string" && COMBO_TEMP_UNAVAIL_RE.test(errorText);
       const cooldownReason = isAuthLockedComboError(errorBody)
         ? "auth_model_locked"
         : isPreflightTimeoutText(errorText)
           ? "preflight_timeout"
-          : "fallback_error";
-      const cooldownUntil = markComboCooldown(modelStr);
+          : isTempUnavail
+            ? "temp_unavailable_short"
+            : "fallback_error";
+      // Transient capacity blip → short fixed cooldown so the primary isn't sidelined
+      // for the full 30s window (keeps euro fable as primary; see D-option fix).
+      const cooldownUntil = markComboCooldown(modelStr, isTempUnavail ? COMBO_TEMP_UNAVAIL_COOLDOWN_MS : null);
       if (cooldownUntil) {
         log.warn("COMBO", `${comboLogPrefix} | cooldown model=${modelStr} until=${formatConsoleTimeGmt7(cooldownUntil)} reason=${cooldownReason}`, { status: result.status, cooldownMs });
       }

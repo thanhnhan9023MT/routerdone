@@ -73,7 +73,7 @@ export function adaptiveFirstProductiveTimeoutMs(routeMode, fallbackMs, stats = 
   // Clamp even without stats so saved per-combo overrides cannot inflate the
   // attempt deadline above what the route mode actually tolerates.
   const bounds = routeMode === "combo"
-    ? { min: 4000, max: 12000 }
+    ? { min: 4000, max: 300000 }
     : routeMode === "fusion"
       ? { min: 3000, max: 8000 }
       : { min: 5000, max: fallbackMs };

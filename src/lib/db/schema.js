@@ -98,6 +98,23 @@ export const TABLES = {
       name: "TEXT UNIQUE NOT NULL",
       kind: "TEXT",
       models: "TEXT NOT NULL",
+      // Per-combo first-productive (idle) timeout in ms for SLOW-REASONING members
+      // (see open-sse/services/combo.js withModelStreamPolicy). NULL → global default
+      // COMBO_REASONING_STREAM_FIRST_PRODUCTIVE_TIMEOUT_MS (120s). Auto-added by
+      // syncSchemaFromTables on boot (additive, nullable → existing rows unaffected).
+      reasoningTimeoutMs: "INTEGER",
+      // Optional external vision handler for this combo: a `prefix/model` ref OR another
+      // combo name. When set AND the request carries an image, it's tried FIRST (ahead of
+      // the combo's own members); when NULL, images use the combo's own vision members.
+      // Auto-added by syncSchemaFromTables on boot (additive, nullable).
+      visionModel: "TEXT",
+      // Optional external PDF/document handler (same semantics as visionModel, for `file`
+      // requests). NULL → PDFs use the combo's own members.
+      pdfModel: "TEXT",
+      // Per-node stream timeout override: JSON map { "<node-ref>": <ms> }. A node with an
+      // entry gets that firstByte+firstProductive budget (bypassing the reasoning gate).
+      // NULL → nodes use combo/global default. Auto-added by syncSchemaFromTables (nullable).
+      nodeTimeouts: "TEXT",
       createdAt: "TEXT NOT NULL",
       updatedAt: "TEXT NOT NULL",
     },

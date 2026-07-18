@@ -1,0 +1,127 @@
+diff --git a/web/default/src/features/dashboard/components/overview/spend-chart.tsx b/web/default/src/features/dashboard/components/overview/spend-chart.tsx
+index 498e89f83..07c7d737c 100644
+--- a/web/default/src/features/dashboard/components/overview/spend-chart.tsx
++++ b/web/default/src/features/dashboard/components/overview/spend-chart.tsx
+@@ -1,7 +1,7 @@
+ import { useState } from 'react'
+ import { useTranslation } from 'react-i18next'
+ import dayjs from '@/lib/dayjs'
+-import { formatQuota } from '@/lib/format'
++import { formatQuota, formatQuotaCompact } from '@/lib/format'
+ import { useOverviewSeries } from '@/features/dashboard/hooks/use-overview-series'
+ import { buildSpendGeom } from '@/features/dashboard/lib/spend-chart-geom'
+ 
+@@ -9,7 +9,9 @@ import { buildSpendGeom } from '@/features/dashboard/lib/spend-chart-geom'
+ // y∈[20,200] → pad l40 r12 t20 b20).
+ const W = 640
+ const H = 220
+-const PAD = { l: 40, r: 12, t: 20, b: 20 }
++// l=56 gives the y-axis gutter room for compact currency labels (e.g. "5,2 Tr")
++// so they never spill left of the chart (the SVG uses overflow:visible).
++const PAD = { l: 56, r: 12, t: 20, b: 20 }
+ 
+ const clamp = (v: number, lo: number, hi: number) =>
+   Math.max(lo, Math.min(hi, v))
+@@ -190,7 +192,7 @@ export function SpendChart() {
+                   fill='var(--ov-faint)'
+                   fontFamily='monospace'
+                 >
+-                  {formatQuota(tk.value)}
++                  {formatQuotaCompact(tk.value)}
+                 </text>
+               </g>
+             ))}
+@@ -255,7 +257,7 @@ export function SpendChart() {
+                 fill='#fff'
+                 fontFamily='monospace'
+               >
+-                {formatQuota(lastValue)}
++                {formatQuotaCompact(lastValue)}
+               </text>
+             </g>
+           </svg>
+diff --git a/web/default/src/lib/currency.ts b/web/default/src/lib/currency.ts
+index b0b1b49bc..8fbb6694e 100644
+--- a/web/default/src/lib/currency.ts
++++ b/web/default/src/lib/currency.ts
+@@ -76,6 +76,13 @@ export interface CurrencyFormatOptions {
+   abbreviate?: boolean
+   /** Minimal absolute value to display when rounding would produce zero */
+   minimumNonZero?: number
++  /**
++   * Locale-aware compact notation for currency/custom display (e.g. VND
++   * "5,2 Tr" / "26 T", USD "$5.9M"). Opt-in (default false) so normal money
++   * displays stay exact; used for space-constrained spots like chart axis
++   * labels. Distinct from `abbreviate` (which only does a "k" suffix on tokens).
++   */
++  compact?: boolean
+ }
+ 
+ type DisplayMeta =
+@@ -103,6 +110,7 @@ const DEFAULT_FORMAT_OPTIONS: Required<CurrencyFormatOptions> = {
+   digitsSmall: 4,
+   abbreviate: true,
+   minimumNonZero: 0,
++  compact: false,
+ }
+ 
+ const DISPLAY_TYPE_VALUES = ['USD', 'CNY', 'TOKENS', 'CUSTOM', 'VND'] as const
+@@ -211,6 +219,7 @@ function mergeOptions(
+     abbreviate: options.abbreviate ?? DEFAULT_FORMAT_OPTIONS.abbreviate,
+     minimumNonZero:
+       options.minimumNonZero ?? DEFAULT_FORMAT_OPTIONS.minimumNonZero,
++    compact: options.compact ?? DEFAULT_FORMAT_OPTIONS.compact,
+   }
+ }
+ 
+@@ -283,16 +292,19 @@ function formatCurrencyValue(
+       style: 'currency',
+       currency: meta.currencyCode,
+       currencyDisplay: 'narrowSymbol',
+-      minimumFractionDigits: 0,
+-      maximumFractionDigits: digits,
++      ...(options.compact
++        ? { notation: 'compact', maximumFractionDigits: 1 }
++        : { minimumFractionDigits: 0, maximumFractionDigits: digits }),
+     }).format(adjustedValue)
+     return formatted
+   }
+ 
+-  const decimal = new Intl.NumberFormat(undefined, {
+-    minimumFractionDigits: 0,
+-    maximumFractionDigits: digits,
+-  }).format(adjustedValue)
++  const decimal = new Intl.NumberFormat(
++    undefined,
++    options.compact
++      ? { notation: 'compact', maximumFractionDigits: 1 }
++      : { minimumFractionDigits: 0, maximumFractionDigits: digits }
++  ).format(adjustedValue)
+ 
+   return `${meta.symbol}${decimal}`
+ }
+diff --git a/web/default/src/lib/format.ts b/web/default/src/lib/format.ts
+index aee93e31c..b81aafa05 100644
+--- a/web/default/src/lib/format.ts
++++ b/web/default/src/lib/format.ts
+@@ -52,6 +52,20 @@ export function formatQuota(quota: number): string {
+   })
+ }
+ 
++/**
++ * Compact quota display for space-constrained spots (chart axis labels, small
++ * badges): locale-aware compact notation so large VND amounts stay short
++ * (e.g. "5,2 Tr", "26 T") instead of a 26-char "25.945.405.858 ₫" that
++ * overflows. Currency-aware (applies the display exchange rate + symbol).
++ */
++export function formatQuotaCompact(quota: number): string {
++  return formatQuotaWithCurrency(quota, {
++    digitsLarge: 2,
++    digitsSmall: 4,
++    compact: true,
++  })
++}
++
+ /**
+  * Parse an ADMIN money input back to quota units. Admin inputs are ALWAYS
+  * USD-denominated (spec §4.7), regardless of the user-facing display type:

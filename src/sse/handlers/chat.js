@@ -205,7 +205,11 @@ export async function handleChat(request, clientRawRequest = null) {
       comboStickyLimit,
       comboRetryAttempts,
       comboRetryDelayMs,
-      comboPreflightTimeoutMs
+      comboPreflightTimeoutMs,
+      comboReasoningTimeoutMs: comboModels.reasoningTimeoutMs || null,
+      nodeTimeouts: comboModels.nodeTimeouts || null,
+      comboVisionModel: comboModels.visionModel || null,
+      comboPdfModel: comboModels.pdfModel || null
     });
   }
 
@@ -272,7 +276,11 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
         comboStickyLimit,
         comboRetryAttempts,
         comboRetryDelayMs,
-        comboPreflightTimeoutMs
+        comboPreflightTimeoutMs,
+        comboReasoningTimeoutMs: comboModels.reasoningTimeoutMs || null,
+        nodeTimeouts: comboModels.nodeTimeouts || null,
+      comboVisionModel: comboModels.visionModel || null,
+      comboPdfModel: comboModels.pdfModel || null
       });
     }
     log.warn("CHAT", "Invalid model format", { model: modelStr });

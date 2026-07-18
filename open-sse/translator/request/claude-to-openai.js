@@ -178,6 +178,22 @@ function convertClaudeMessage(msg) {
           }
           break;
 
+        case CLAUDE_BLOCK.DOCUMENT:
+          // Claude document (PDF) block -> internal OpenAI "file" part (data URI).
+          // The openai-to-claude egress converts it back to a Claude document for
+          // anthropic nodes (e.g. minerva). Keeps PDFs alive across the ingest hop
+          // for /v1/messages (previously only images survived, PDFs were dropped).
+          if (block.source?.type === "base64") {
+            parts.push({
+              type: OPENAI_BLOCK.FILE,
+              file: {
+                filename: block.title || "document.pdf",
+                file_data: encodeDataUri(block.source.media_type, block.source.data)
+              }
+            });
+          }
+          break;
+
         case CLAUDE_BLOCK.TOOL_USE:
           toolCalls.push({
             id: block.id,

@@ -1,0 +1,12 @@
+{
+ "claude-opus-4.8-v": "[\"xpk/kr/claude-opus-4.8\", \"cheat/claude-opus-4-8\", \"euro/accounts/euromodels/models/glm-5.2\", \"ollama/glm-5.2\", \"psh/xai/grok-4.5\", \"goci/xai/grok-4.5\"]",
+ "claude-opus-4-8": "[\"euro/accounts/euromodels/models/claude-opus-4.8\", \"cheat/claude-opus-4-8[1m]\", \"euro/accounts/euromodels/models/glm-5.2\", \"ollama/glm-5.2\", \"psh/xai/grok-4.5\", \"goci/xai/grok-4.5\"]",
+ "claude-opus-4-8-vip": "[\"vilao/claude-opus-4-8\", \"cheat/claude-opus-4-8\", \"euro/accounts/euromodels/models/glm-5.2\", \"ollama/glm-5.2\", \"psh/xai/grok-4.5\", \"goci/xai/grok-4.5\"]",
+ "claude-sonnet-4-6": "[\"euro/accounts/euromodels/models/claude-sonnet-5\", \"cheat/claude-sonnet-4-6\", \"euro/accounts/euromodels/models/glm-5.2\", \"ollama/glm-5.2\", \"psh/xai/grok-4.5\", \"goci/xai/grok-4.5\"]",
+ "claude-opus-4-7": "[\"euro/accounts/euromodels/models/claude-opus-4.8\", \"cheat/claude-opus-4-7\", \"euro/accounts/euromodels/models/glm-5.2\", \"ollama/glm-5.2\", \"psh/xai/grok-4.5\", \"goci/xai/grok-4.5\"]",
+ "claude-opus-4-6": "[\"euro/accounts/euromodels/models/claude-opus-4.8\", \"cheat/claude-opus-4-6\", \"euro/accounts/euromodels/models/glm-5.2\", \"ollama/glm-5.2\", \"psh/xai/grok-4.5\", \"goci/xai/grok-4.5\"]",
+ "claude-sonnet-5": "[\"euro/accounts/euromodels/models/claude-sonnet-5\", \"cheat/claude-sonnet-4-6\", \"euro/accounts/euromodels/models/glm-5.2\", \"ollama/glm-5.2\"]",
+ "claude-opus-4-8-kr": "[\"euro/accounts/euromodels/models/claude-opus-4.8\", \"cheat/claude-opus-4-8\", \"euro/accounts/euromodels/models/glm-5.2\", \"ollama/glm-5.2\", \"psh/xai/grok-4.5\", \"goci/xai/grok-4.5\"]",
+ "claude-fable-5": "[\"euro/accounts/euromodels/models/claude-fable-5\", \"cheat/claude-opus-4-8\", \"euro/accounts/euromodels/models/glm-5.2\", \"ollama/glm-5.2\", \"psh/xai/grok-4.5\", \"goci/xai/grok-4.5\"]",
+ "claude-opus-4-8-ln": "[\"euro/accounts/euromodels/models/claude-opus-4.8\", \"cheat/claude-opus-4-8\", \"minerva/mvx/claude-opus-4-8\", \"euro/accounts/euromodels/models/glm-5.2\", \"ollama/glm-5.2\", \"psh/xai/grok-4.5\", \"goci/xai/grok-4.5\"]"
+}

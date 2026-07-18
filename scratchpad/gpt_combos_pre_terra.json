@@ -1,0 +1,12 @@
+{
+ "gpt-5.5": [
+  "goci/cx/gpt-5.5",
+  "euro/accounts/euromodels/models/gpt-5.5",
+  "psh/cx/gpt-5.5"
+ ],
+ "gpt-5.6-sol": [
+  "goci/cx/gpt-5.6-terra",
+  "psh/cx/gpt-5.6-terra",
+  "goci/cx/gpt-5.5"
+ ]
+}

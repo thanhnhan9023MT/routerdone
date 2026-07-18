@@ -1,0 +1,33 @@
+[1;36m[deploy][0m preconditions OK: new-api-2 new-api-1 + newapi-superup-nginx-1 running
+[1;36m[deploy][0m stream-safety preflight OK: both nodes already drain >= 300s
+[1;36m[deploy][0m tagging current image (sha256:500e971984b1f37a1669535e9dec7ba04a0bf9ac90b81d424cff03d7a0bf5c5c) as newapi-superup/new-api:rollback-20260717T185007Z
+[1;36m[deploy][0m recreating new-api-2 (the other node keeps serving) — Docker waits up to stop_grace_period(330s) for in-flight streams to drain
+time="2026-07-17T18:50:07Z" level=warning msg="volume \"newapi-superup_redis-data\" already exists but was not created by Docker Compose. Use `external: true` to use an existing volume"
+ Container new-api-2  Recreate
+ Container new-api-2  Recreated
+ Container new-api-2  Starting
+ Container new-api-2  Started
+[1;36m[deploy][0m health-gating new-api-2 at 172.18.0.14:3000/api/status (timeout 420s)
+[1;36m[deploy][0m new-api-2 healthy (200) after 5s
+[1;36m[deploy][0m reloading nginx (graceful) so it re-resolves new-api-2's new IP before the next node
+nginx: the configuration file /etc/nginx/nginx.conf syntax is ok
+nginx: configuration file /etc/nginx/nginx.conf test is successful
+2026/07/17 18:50:30 [notice] 3312#3312: signal process started
+[1;36m[deploy][0m restart count for new-api-2: 0
+[1;36m[deploy][0m recreating new-api-1 (the other node keeps serving) — Docker waits up to stop_grace_period(330s) for in-flight streams to drain
+time="2026-07-17T18:50:30Z" level=warning msg="volume \"newapi-superup_redis-data\" already exists but was not created by Docker Compose. Use `external: true` to use an existing volume"
+ Container new-api-1  Recreate
+ Container new-api-1  Recreated
+ Container new-api-1  Starting
+ Container new-api-1  Started
+[1;36m[deploy][0m health-gating new-api-1 at 172.18.0.2:3000/api/status (timeout 420s)
+[1;36m[deploy][0m new-api-1 healthy (200) after 5s
+[1;36m[deploy][0m reloading nginx (graceful) so it re-resolves new-api-1's new IP before the next node
+nginx: the configuration file /etc/nginx/nginx.conf syntax is ok
+nginx: configuration file /etc/nginx/nginx.conf test is successful
+2026/07/17 18:51:27 [notice] 3330#3330: signal process started
+[1;36m[deploy][0m restart count for new-api-1: 0
+[1;36m[deploy][0m verifying through nginx ...
+[1;36m[deploy][0m public /api/status -> 200 ; /v1/models -> 401 (401/200 both OK; 502/000 = problem)
+[1;36m[deploy][0m DONE. Rollback if needed (re-runs this safe rolling path with the previous image):
+[1;36m[deploy][0m     docker tag newapi-superup/new-api:rollback-20260717T185007Z newapi-superup/new-api:upgradev2 && /root/NewApi-SuperUp/scripts/rolling-deploy-new-api.sh

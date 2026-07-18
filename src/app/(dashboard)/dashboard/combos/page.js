@@ -530,6 +530,16 @@ function ComboFormModal({ isOpen, combo, onClose, onSave, activeProviders, kindF
   // Initialize state with combo values - key prop on parent handles reset on remount
   const [name, setName] = useState(combo?.name || "");
   const [models, setModels] = useState(combo?.models || []);
+  // Per-combo reasoning first-productive timeout, edited in SECONDS (stored as ms).
+  // Blank → global default (120s). Only affects slow-reasoning members.
+  const [reasoningTimeoutSec, setReasoningTimeoutSec] = useState(
+    combo?.reasoningTimeoutMs ? String(Math.round(combo.reasoningTimeoutMs / 1000)) : ""
+  );
+  // External vision handler: a model ref (prefix/model) or another combo name used for
+  // image requests. Blank → images use the combo's own vision members.
+  const [visionModel, setVisionModel] = useState(combo?.visionModel || "");
+  // External PDF/document handler (model ref or combo name) for `file` requests.
+  const [pdfModel, setPdfModel] = useState(combo?.pdfModel || "");
   const [showModelSelect, setShowModelSelect] = useState(false);
   const [saving, setSaving] = useState(false);
   const [nameError, setNameError] = useState("");
@@ -620,7 +630,12 @@ function ComboFormModal({ isOpen, combo, onClose, onSave, activeProviders, kindF
   const handleSave = async () => {
     if (!validateName(name)) return;
     setSaving(true);
-    await onSave({ name: name.trim(), models });
+    // Seconds → ms; blank/invalid → null (server clamps to [4, 300]s).
+    const trimmedSec = String(reasoningTimeoutSec).trim();
+    const reasoningTimeoutMs = trimmedSec === "" || !(Number(trimmedSec) > 0)
+      ? null
+      : Math.round(Number(trimmedSec) * 1000);
+    await onSave({ name: name.trim(), models, reasoningTimeoutMs, visionModel: visionModel.trim() || null, pdfModel: pdfModel.trim() || null });
     setSaving(false);
   };
 
@@ -692,6 +707,73 @@ function ComboFormModal({ isOpen, combo, onClose, onSave, activeProviders, kindF
               <span className="material-symbols-outlined text-[16px]">add</span>
               Add Model
             </button>
+          </div>
+
+          {/* Reasoning timeout (per-combo) */}
+          <div>
+            <label htmlFor="combo-reasoning-timeout" className="mb-1 flex items-center gap-1 text-sm font-medium">
+              <span className="material-symbols-outlined text-[15px] text-text-muted">timer</span>
+              Timeout reasoning
+              <span className="text-[10px] font-normal text-text-muted">(giây)</span>
+            </label>
+            <div className="flex items-stretch">
+              <input
+                id="combo-reasoning-timeout"
+                type="number"
+                min="4"
+                max="300"
+                step="1"
+                inputMode="numeric"
+                value={reasoningTimeoutSec}
+                onChange={(e) => setReasoningTimeoutSec(e.target.value)}
+                placeholder="120 (mặc định)"
+                className="min-w-0 flex-1 rounded-l border border-r-0 border-black/10 bg-white px-2 py-1.5 text-sm outline-none focus:border-primary dark:border-white/10 dark:bg-black/20"
+              />
+              <span className="inline-flex items-center rounded-r border border-black/10 bg-black/[0.04] px-2 font-mono text-xs text-text-muted dark:border-white/10 dark:bg-white/[0.04]">giây</span>
+            </div>
+            <p className="mt-0.5 text-[10px] text-text-muted">
+              Thời gian chờ member <span className="font-medium">reasoning</span> ra nội dung đầu trước khi rơi fallback. Trống = mặc định 120s. Chỉ áp cho model nghĩ lâu (fable/glm/claude…), không đụng fallback nhanh như grok. Giới hạn 4–300s.
+            </p>
+          </div>
+
+          {/* External vision handler (per-combo) */}
+          <div>
+            <label htmlFor="combo-vision-model" className="mb-1 flex items-center gap-1 text-sm font-medium">
+              <span className="material-symbols-outlined text-[15px] text-text-muted">visibility</span>
+              Vision model
+              <span className="text-[10px] font-normal text-text-muted">(external)</span>
+            </label>
+            <input
+              id="combo-vision-model"
+              type="text"
+              value={visionModel}
+              onChange={(e) => setVisionModel(e.target.value)}
+              placeholder="vd: kimi-k2.7-vision  hoặc  ollama/kimi-k2.7-code"
+              className="w-full rounded border border-black/10 bg-white px-2 py-1.5 font-mono text-sm outline-none focus:border-primary dark:border-white/10 dark:bg-black/20"
+            />
+            <p className="mt-0.5 text-[10px] text-text-muted">
+              Khi request <span className="font-medium">có ảnh</span>, dùng model/combo này để xử lý vision (thử trước các member). Nhập <span className="font-mono">prefix/model</span> hoặc tên một combo vision. Trống = dùng vision của chính các member trong combo.
+            </p>
+          </div>
+
+          {/* External PDF/document handler (per-combo) */}
+          <div>
+            <label htmlFor="combo-pdf-model" className="mb-1 flex items-center gap-1 text-sm font-medium">
+              <span className="material-symbols-outlined text-[15px] text-text-muted">picture_as_pdf</span>
+              PDF model
+              <span className="text-[10px] font-normal text-text-muted">(external)</span>
+            </label>
+            <input
+              id="combo-pdf-model"
+              type="text"
+              value={pdfModel}
+              onChange={(e) => setPdfModel(e.target.value)}
+              placeholder="vd: cheat/claude-opus-4-8  hoặc  euro/…/gpt-5.6-terra"
+              className="w-full rounded border border-black/10 bg-white px-2 py-1.5 font-mono text-sm outline-none focus:border-primary dark:border-white/10 dark:bg-black/20"
+            />
+            <p className="mt-0.5 text-[10px] text-text-muted">
+              Khi request <span className="font-medium">có file PDF/document</span>, dùng model/combo này (thử trước các member). Trống = dùng chính các member (nếu model đó đọc được PDF).
+            </p>
           </div>
 
           {/* Actions */}

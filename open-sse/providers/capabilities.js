@@ -78,6 +78,16 @@ export const MODEL_CAPABILITIES = {
   "claude-sonnet-4.6": { vision: true, reasoning: true, search: true, thinkingFormat: "claude-adaptive", contextWindow: 1000000, maxOutput: 64000 },
   "claude-sonnet-4-6": { vision: true, reasoning: true, search: true, thinkingFormat: "claude-adaptive", contextWindow: 1000000, maxOutput: 64000 },
 
+  // MinervaX (model-id prefix "mvx/") — real Anthropic passthrough that ALSO carries
+  // PDF `document` blocks (verified 2026-07-15). Keyed by the FULL mvx/ id (resolved
+  // via the full-id-first lookup below) so ONLY minerva gets pdf:true — the bare
+  // claude-* names used by euro/kiro stay pdf:false, so combos route a PDF request
+  // specifically to the minerva member (euro strips PDFs, kiro has no document path).
+  // A PROVIDER_CAPABILITIES key can't be used: the "minerva" alias resolves to a node
+  // UUID before the capability lookup runs (see ROUTING logs).
+  "mvx/claude-opus-4-8":   { vision: true, pdf: true, reasoning: true, search: true, thinkingFormat: "claude-adaptive", contextWindow: 1000000, maxOutput: 128000 },
+  "mvx/claude-sonnet-4-6": { vision: true, pdf: true, reasoning: true, search: true, thinkingFormat: "claude-adaptive", contextWindow: 1000000, maxOutput: 64000 },
+
   // Gemini image-gen / OpenAI image / xai image variants
   "gpt-image-1":       { imageOutput: true, tools: false },
 
@@ -93,10 +103,32 @@ export const MODEL_CAPABILITIES = {
   "MiniMax-M3":        { vision: true, reasoning: true, thinkingFormat: "minimax", contextWindow: 1000000, maxOutput: 128000 },
 };
 
+// cheat-ai (Anthropic-compatible reseller, base api.cheat-ai.shop) is the PDF-capable
+// claude source for the claude combos: unlike euro (strips PDFs) / kiro-ttfa-vilao (no
+// document path) it reads a raw PDF `document`/`file` block (verified 2026-07-17). These
+// caps live here — NOT on the broad *claude* pattern — so ONLY cheat's real-claude models
+// get pdf:true; the other resellers stay pdf:false and merely strip a PDF (degrade to
+// text) instead of 502-ing. All are genuine claude-opus/sonnet-4.x → adaptive thinking +
+// 1M ctx (also normalises cheat's previously-inconsistent per-model fallbacks). Keyed
+// under BOTH the "cheat" alias (seen by reorderByCapabilities, which splits a "cheat/…"
+// member) AND the connection node id (seen by the chatCore modality strip, where the
+// alias is already resolved to the id — verified in ROUTING/MODALITY logs).
+const CHEAT_CLAUDE_CAPS = {
+  "claude-opus-4-8[1m]": { vision: true, pdf: true, reasoning: true, search: true, thinkingFormat: "claude-adaptive", contextWindow: 1000000, maxOutput: 128000 },
+  "claude-opus-4-8":     { vision: true, pdf: true, reasoning: true, search: true, thinkingFormat: "claude-adaptive", contextWindow: 1000000, maxOutput: 128000 },
+  "claude-opus-4-7":     { vision: true, pdf: true, reasoning: true, search: true, thinkingFormat: "claude-adaptive", contextWindow: 1000000, maxOutput: 128000 },
+  "claude-opus-4-6":     { vision: true, pdf: true, reasoning: true, search: true, thinkingFormat: "claude-adaptive", contextWindow: 1000000, maxOutput: 128000 },
+  "claude-sonnet-4-6":   { vision: true, pdf: true, reasoning: true, search: true, thinkingFormat: "claude-adaptive", contextWindow: 1000000, maxOutput: 64000 },
+};
+
 /**
  * Provider-specific capability overrides. Keyed by provider alias/id.
  */
 export const PROVIDER_CAPABILITIES = {
+  // cheat-ai claude models — the PDF-capable claude source (see CHEAT_CLAUDE_CAPS).
+  // Two keys, same caps: "cheat" alias for reorderByCapabilities, node id for chatCore.
+  "cheat": CHEAT_CLAUDE_CAPS,
+  "anthropic-compatible-35c3735f-e330-4a6e-9561-8b538b0463b4": CHEAT_CLAUDE_CAPS,
   // CodeBuddy.cn — authoritative per-model metadata from the gateway's model
   // config (contextWindow=maxInputTokens, maxOutput=maxOutputTokens, vision=
   // supportsImages). Every model reasons via OpenAI-style reasoning_effort
@@ -129,6 +161,12 @@ export const PROVIDER_CAPABILITIES = {
  */
 export const PATTERN_CAPABILITIES = [
   // ── Claude (4.6+ = adaptive thinking; older/haiku = budget) ──────
+  // NOTE: pdf stays FALSE on these broad patterns on purpose. Most claude
+  // resellers (euro strips PDFs; kiro/ttfa/vilao have no document path) CHOKE on a
+  // raw PDF block; only specific PDF-capable sources declare pdf:true (mvx via the
+  // full-id MODEL_CAPABILITIES key above, cheat via PROVIDER_CAPABILITIES by node id
+  // below). A blanket pdf:true here would route PDFs to whichever claude member is
+  // primary (usually euro) → 502 + a 30s cooldown that also sidelines text traffic.
   { pattern: "*claude*opus-4.6*",   caps: { vision: true, reasoning: true, search: true, thinkingFormat: "claude-adaptive" } },
   { pattern: "*claude*opus-4.7*",   caps: { vision: true, reasoning: true, search: true, thinkingFormat: "claude-adaptive" } },
   { pattern: "*claude*opus-4.8*",   caps: { vision: true, reasoning: true, search: true, thinkingFormat: "claude-adaptive" } },
@@ -155,7 +193,7 @@ export const PATTERN_CAPABILITIES = [
   // ── OpenAI GPT-5.x (vision + thinking + web search) ──────────────
   { pattern: "*gpt-5*image*",   caps: { imageOutput: true } },
   { pattern: "*gpt-5*codex*",   caps: { reasoning: true, search: true, thinkingFormat: "openai", contextWindow: 400000, maxOutput: 128000 } },
-  { pattern: "*gpt-5*",         caps: { vision: true, reasoning: true, search: true, thinkingFormat: "openai", contextWindow: 400000, maxOutput: 128000 } },
+  { pattern: "*gpt-5*",         caps: { vision: true, pdf: true, reasoning: true, search: true, thinkingFormat: "openai", contextWindow: 400000, maxOutput: 128000 } },
   { pattern: "*gpt-4o*",        caps: { vision: true, search: true, contextWindow: 128000, maxOutput: 16384 } },
   { pattern: "*gpt-4.1*",       caps: { vision: true, contextWindow: 1000000, maxOutput: 32768 } },
   { pattern: "*gpt-4-turbo*",   caps: { vision: true, contextWindow: 128000 } },
@@ -256,10 +294,14 @@ export function getCapabilitiesForModel(provider, model) {
     return { ...DEFAULT_CAPABILITIES, ...PROVIDER_CAPABILITIES[provider][model] };
   }
 
-  // 2. Canonical exact (strip vendor prefix: "anthropic/claude-opus-4.7" -> "claude-opus-4.7")
+  // 2. Canonical exact. Check the FULL id FIRST so a prefixed override like
+  // "mvx/claude-sonnet-4-6" wins over the bare "claude-sonnet-4-6"; then fall back
+  // to the vendor-stripped base ("anthropic/claude-opus-4.7" -> "claude-opus-4.7").
+  // (Full-id-first is a no-op for every existing bare-name entry — only prefixed
+  // MODEL_CAPABILITIES keys, i.e. the mvx/ ones, change behaviour.)
   const baseModel = model.includes("/") ? model.split("/").pop() : model;
-  if (MODEL_CAPABILITIES[baseModel]) return { ...DEFAULT_CAPABILITIES, ...MODEL_CAPABILITIES[baseModel] };
   if (MODEL_CAPABILITIES[model]) return { ...DEFAULT_CAPABILITIES, ...MODEL_CAPABILITIES[model] };
+  if (MODEL_CAPABILITIES[baseModel]) return { ...DEFAULT_CAPABILITIES, ...MODEL_CAPABILITIES[baseModel] };
 
   // 3. Pattern match (first match wins)
   for (const { pattern, caps } of PATTERN_CAPABILITIES) {

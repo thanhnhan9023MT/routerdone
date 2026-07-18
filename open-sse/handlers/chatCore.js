@@ -414,7 +414,7 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   const { onStreamComplete } = buildOnStreamComplete({ ...sharedCtx });
   // Provider force-stream but client non-stream -> cap first productive timeout to detect mismatch fast
   const streamTimeoutOverride = providerRequiresStreaming && !clientRequestedStreaming
-    ? { ...resolvedStreamPolicy, firstProductiveTimeoutMs: Math.min(resolvedStreamPolicy.firstProductiveTimeoutMs ?? 45000, 45000) }
+    ? { ...resolvedStreamPolicy, firstProductiveTimeoutMs: Math.min(resolvedStreamPolicy.firstProductiveTimeoutMs ?? 120000, 300000) }
     : resolvedStreamPolicy;
 
   const retryEmptyStream = async () => {

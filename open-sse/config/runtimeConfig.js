@@ -61,7 +61,7 @@ export const DIRECT_STREAM_TOTAL_BUDGET_MS = envMs("DIRECT_STREAM_TOTAL_BUDGET_M
 
 export const COMBO_STREAM_FIRST_BYTE_TIMEOUT_MS = envMs("COMBO_STREAM_FIRST_BYTE_TIMEOUT_MS", 3 * 1000);
 export const COMBO_STREAM_FIRST_PRODUCTIVE_TIMEOUT_MS = envMs("COMBO_STREAM_FIRST_PRODUCTIVE_TIMEOUT_MS", 9 * 1000);
-export const COMBO_REASONING_STREAM_FIRST_PRODUCTIVE_TIMEOUT_MS = envMs("COMBO_REASONING_STREAM_FIRST_PRODUCTIVE_TIMEOUT_MS", 45 * 1000);
+export const COMBO_REASONING_STREAM_FIRST_PRODUCTIVE_TIMEOUT_MS = envMs("COMBO_REASONING_STREAM_FIRST_PRODUCTIVE_TIMEOUT_MS", 120 * 1000);
 export const COMBO_STREAM_IDLE_AFTER_PRODUCTIVE_MS = envMs("COMBO_STREAM_IDLE_AFTER_PRODUCTIVE_MS", 120 * 1000);
 export const COMBO_STREAM_TOTAL_BUDGET_MS = envMs("COMBO_STREAM_TOTAL_BUDGET_MS", 300 * 1000);
 
@@ -143,6 +143,26 @@ export function shouldForceStreamUpstream(provider, model) {
   if (model && FORCE_STREAM_UPSTREAM_MODELS.has(`${provider}/${model}`)) return true;
   return false;
 }
+
+// Opposite case: models whose upstream 502s on stream:true (backend EOFs before any
+// chunk — "channel_empty_response") but answers fine non-stream. The executor sends
+// stream:false and synthesizes an SSE body from the JSON reply, so streaming clients,
+// combos and the SSE→JSON path all work unchanged. Takes precedence over
+// shouldForceStreamUpstream for the actual upstream call. Keyed "providerId/modelId".
+export const FORCE_NONSTREAM_UPSTREAM_MODELS = new Set([
+  // aihubmix: coding-kimi-k3 family EOFs on stream:true (verified 2026-07-17)
+  "openai-compatible-chat-3121885d-b8e5-475c-a361-4402946e2ad6/coding-kimi-k3",
+  "openai-compatible-chat-3121885d-b8e5-475c-a361-4402946e2ad6/coding-kimi-k3-free",
+]);
+
+export function shouldForceNonStreamUpstream(provider, model) {
+  if (!provider || !model) return false;
+  return FORCE_NONSTREAM_UPSTREAM_MODELS.has(`${provider}/${model}`);
+}
+
+// Non-stream upstream returns headers only after generation completes — allow far
+// longer than the streaming connect timeout (combo first-productive still caps at 60s).
+export const FORCE_NONSTREAM_CONNECT_TIMEOUT_MS = Number(process.env.FORCE_NONSTREAM_CONNECT_TIMEOUT_MS) || 180000;
 // Fixed-tick preflight: poll every 3s, 2-tier caps for fast fallback
 export const PREFLIGHT_TICK_MS = Number(process.env.PREFLIGHT_TICK_MS) || 3000;
 export const PREFLIGHT_NO_BYTE_CAP_MS = Number(process.env.PREFLIGHT_NO_BYTE_CAP_MS) || 6000;

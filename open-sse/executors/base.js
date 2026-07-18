@@ -1,8 +1,43 @@
-import { HTTP_STATUS, RETRY_CONFIG, DEFAULT_RETRY_CONFIG, resolveRetryEntry, FETCH_CONNECT_TIMEOUT_MS } from "../config/runtimeConfig.js";
+import { HTTP_STATUS, RETRY_CONFIG, DEFAULT_RETRY_CONFIG, resolveRetryEntry, FETCH_CONNECT_TIMEOUT_MS, shouldForceNonStreamUpstream, FORCE_NONSTREAM_CONNECT_TIMEOUT_MS } from "../config/runtimeConfig.js";
 import { shouldRefreshCredentials } from "../services/oauthCredentialManager.js";
 import { proxyAwareFetch } from "../utils/proxyFetch.js";
 import { dbg } from "../utils/debugLog.js";
 import { ANTHROPIC_API_VERSION, OPENAI_COMPAT_BASE, ANTHROPIC_COMPAT_BASE } from "../providers/shared.js";
+
+/**
+ * Build an OpenAI-style SSE body from a complete chat.completion JSON so the rest of
+ * the pipeline (stream translators, combo, SSE→JSON) sees a normal upstream stream.
+ * Used for FORCE_NONSTREAM_UPSTREAM_MODELS (upstreams that EOF on stream:true).
+ */
+function buildSSETextFromCompletion(json, fallbackModel) {
+  const base = {
+    id: json?.id || `chatcmpl-synth-${Date.now()}`,
+    object: "chat.completion.chunk",
+    created: json?.created || Math.floor(Date.now() / 1000),
+    model: json?.model || fallbackModel,
+  };
+  const chunks = [];
+  const choices = Array.isArray(json?.choices) && json.choices.length ? json.choices : [{}];
+  for (const choice of choices) {
+    const index = choice.index ?? 0;
+    const msg = choice.message || {};
+    const mk = (delta) => ({ ...base, choices: [{ index, delta, finish_reason: null }] });
+    chunks.push(mk({ role: msg.role || "assistant" }));
+    if (typeof msg.reasoning_content === "string" && msg.reasoning_content.length) {
+      chunks.push(mk({ reasoning_content: msg.reasoning_content }));
+    }
+    if (typeof msg.content === "string" && msg.content.length) {
+      chunks.push(mk({ content: msg.content }));
+    }
+    if (Array.isArray(msg.tool_calls) && msg.tool_calls.length) {
+      chunks.push(mk({ tool_calls: msg.tool_calls.map((tc, i) => ({ index: i, ...tc })) }));
+    }
+    const final = { ...base, choices: [{ index, delta: {}, finish_reason: choice.finish_reason || "stop" }] };
+    if (json?.usage) final.usage = json.usage;
+    chunks.push(final);
+  }
+  return chunks.map((c) => `data: ${JSON.stringify(c)}\n\n`).join("") + "data: [DONE]\n\n";
+}
 
 /**
  * BaseExecutor - Base class for provider executors
@@ -127,18 +162,31 @@ export class BaseExecutor {
     for (let urlIndex = 0; urlIndex < fallbackCount; urlIndex++) {
       const url = this.buildUrl(model, stream, urlIndex, credentials);
       const transformedBody = this.transformRequest(model, body, stream, credentials);
-      const headers = this.buildHeaders(credentials, stream);
+      // Upstreams that EOF on stream:true (FORCE_NONSTREAM_UPSTREAM_MODELS): send
+      // stream:false and synthesize SSE from the JSON reply after the fetch below.
+      // Clone (don't mutate) so a chatCore retry re-detects from the original body.
+      const forceNonStream = transformedBody?.stream === true
+        && shouldForceNonStreamUpstream(this.provider, transformedBody?.model || model);
+      let sendBody = transformedBody;
+      if (forceNonStream) {
+        sendBody = { ...transformedBody, stream: false };
+        delete sendBody.stream_options; // invalid on strict upstreams when stream=false
+      }
+      const headers = this.buildHeaders(credentials, forceNonStream ? false : stream);
 
       if (!retryAttemptsByUrl[urlIndex]) retryAttemptsByUrl[urlIndex] = 0;
 
-      // Abort if upstream doesn't return response headers within connection timeout
+      // Abort if upstream doesn't return response headers within connection timeout.
+      // Non-stream upstreams only return headers once generation completes → longer cap.
       const connectCtrl = new AbortController();
-      const timeoutMs = this.config?.timeoutMs || FETCH_CONNECT_TIMEOUT_MS;
+      const timeoutMs = forceNonStream
+        ? Math.max(this.config?.timeoutMs || 0, FORCE_NONSTREAM_CONNECT_TIMEOUT_MS)
+        : (this.config?.timeoutMs || FETCH_CONNECT_TIMEOUT_MS);
       const connectTimer = setTimeout(() => connectCtrl.abort(new Error("fetch connect timeout")), timeoutMs);
       const mergedSignal = signal ? AbortSignal.any([signal, connectCtrl.signal]) : connectCtrl.signal;
 
       try {
-        const bodyStr = JSON.stringify(transformedBody);
+        const bodyStr = JSON.stringify(sendBody);
         const fetchT0 = Date.now();
         dbg("FETCH", `${this.provider.toUpperCase()} → ${url} | body=${bodyStr.length}B | connectTimeout=${timeoutMs}ms`);
         const response = await proxyAwareFetch(url, {
@@ -160,7 +208,28 @@ export class BaseExecutor {
           continue;
         }
 
-        return { response, url, headers, transformedBody };
+        if (forceNonStream && response.ok) {
+          const rawText = await response.text();
+          let json = null;
+          try { json = JSON.parse(rawText); } catch { /* handled below */ }
+          if (!json) {
+            dbg("FETCH", `${this.provider.toUpperCase()} forced non-stream: invalid JSON (${rawText.length}B) → 502`);
+            const errResp = new Response(rawText || "invalid JSON from upstream (forced non-stream)", {
+              status: HTTP_STATUS.BAD_GATEWAY,
+              headers: { "content-type": "text/plain" },
+            });
+            return { response: errResp, url, headers, transformedBody: sendBody };
+          }
+          const sseText = buildSSETextFromCompletion(json, sendBody.model || model);
+          dbg("FETCH", `${this.provider.toUpperCase()} forced non-stream → synthesized SSE (${sseText.length}B)`);
+          const sseResp = new Response(sseText, {
+            status: 200,
+            headers: { "content-type": "text/event-stream" },
+          });
+          return { response: sseResp, url, headers, transformedBody: sendBody };
+        }
+
+        return { response, url, headers, transformedBody: sendBody };
       } catch (error) {
         clearTimeout(connectTimer);
         lastError = error;

@@ -1,0 +1,409 @@
+==> [1/6] Verify local main == origin/main (push to main before building)
+    OK: main == origin/main @ b70183993
+==> [2/6] Regression guard: live prod commit must be an ancestor of main
+    OK: prod (2026-07-17-400ab8cb3) is on main's history (or already superseded).
+==> [3/6] Sync build context from git main (delete stale tracked files; protect root-owned cache dirs)
+    OK: /root/NewApi-SuperUp/vendor/new-api-upgradev2 synced from main @ b70183993 (stale source removed; go-cache dirs protected)
+==> [4/6] Compute version stamp
+    VERSION=2026-07-17-b70183993  COMMIT=b70183993  BUILD_TIME=2026-07-17T18:46:59Z
+==> [5/6] docker compose build (stamped)  [builds on prod host — low-traffic, watch RAM]
+#1 [internal] load local bake definitions
+#1 reading from stdin 721B done
+#1 DONE 0.0s
+
+#2 [internal] load build definition from Dockerfile
+#2 transferring dockerfile: 2.51kB done
+#2 DONE 0.0s
+
+#3 [internal] load metadata for docker.io/oven/bun:1@sha256:0733e50325078969732ebe3b15ce4c4be5082f18c4ac1a0f0ca4839c2e4e42a7
+#3 ...
+
+#4 [internal] load metadata for docker.io/library/golang:1.26.1-alpine@sha256:2389ebfa5b7f43eeafbd6be0c3700cc46690ef842ad962f6c5bd6be49ed82039
+#4 DONE 0.0s
+
+#5 [internal] load metadata for docker.io/library/debian:bookworm-slim@sha256:f06537653ac770703bc45b4b113475bd402f451e85223f0f2837acbf89ab020a
+#5 ...
+
+#3 [internal] load metadata for docker.io/oven/bun:1@sha256:0733e50325078969732ebe3b15ce4c4be5082f18c4ac1a0f0ca4839c2e4e42a7
+#3 DONE 1.3s
+
+#5 [internal] load metadata for docker.io/library/debian:bookworm-slim@sha256:f06537653ac770703bc45b4b113475bd402f451e85223f0f2837acbf89ab020a
+#5 DONE 1.3s
+
+#6 [internal] load .dockerignore
+#6 transferring context:
+#6 transferring context: 640B done
+#6 DONE 1.0s
+
+#7 [builder2 1/9] FROM docker.io/library/golang:1.26.1-alpine@sha256:2389ebfa5b7f43eeafbd6be0c3700cc46690ef842ad962f6c5bd6be49ed82039
+#7 resolve docker.io/library/golang:1.26.1-alpine@sha256:2389ebfa5b7f43eeafbd6be0c3700cc46690ef842ad962f6c5bd6be49ed82039 0.0s done
+#7 DONE 0.1s
+
+#8 [stage-3 1/4] FROM docker.io/library/debian:bookworm-slim@sha256:f06537653ac770703bc45b4b113475bd402f451e85223f0f2837acbf89ab020a
+#8 resolve docker.io/library/debian:bookworm-slim@sha256:f06537653ac770703bc45b4b113475bd402f451e85223f0f2837acbf89ab020a 0.1s done
+#8 DONE 0.1s
+
+#9 [builder-classic 1/7] FROM docker.io/oven/bun:1@sha256:0733e50325078969732ebe3b15ce4c4be5082f18c4ac1a0f0ca4839c2e4e42a7
+#9 resolve docker.io/oven/bun:1@sha256:0733e50325078969732ebe3b15ce4c4be5082f18c4ac1a0f0ca4839c2e4e42a7 0.1s done
+#9 DONE 0.1s
+
+#10 [internal] load build context
+#10 transferring context: 25.22MB 0.5s done
+#10 DONE 1.2s
+
+#11 [builder 4/7] COPY web/default/bun.lock .
+#11 CACHED
+
+#12 [builder-classic 2/7] WORKDIR /build
+#12 CACHED
+
+#13 [builder 3/7] COPY web/default/package.json .
+#13 CACHED
+
+#14 [builder2 2/9] WORKDIR /build
+#14 CACHED
+
+#15 [builder2 3/9] ADD go.mod go.sum ./
+#15 CACHED
+
+#16 [builder 5/7] RUN bun install
+#16 CACHED
+
+#17 [builder-classic 4/7] COPY web/classic/bun.lock .
+#17 CACHED
+
+#18 [builder-classic 3/7] COPY web/classic/package.json .
+#18 CACHED
+
+#19 [builder-classic 5/7] RUN bun install
+#19 CACHED
+
+#20 [builder-classic 6/7] COPY ./web/classic .
+#20 CACHED
+
+#21 [builder2 4/9] RUN go mod download
+#21 CACHED
+
+#22 [builder-classic 7/7] RUN VITE_REACT_APP_VERSION="2026-07-17-b70183993" bun run build
+#22 0.295 $ vite build
+#22 ...
+
+#23 [builder 6/7] COPY ./web/default .
+#23 DONE 0.4s
+
+#24 [builder 7/7] RUN DISABLE_ESLINT_PLUGIN='true' VITE_REACT_APP_VERSION="2026-07-17-b70183993" bun run build
+#24 ...
+
+#25 [builder2 5/9] COPY . .
+#25 DONE 1.3s
+
+#24 [builder 7/7] RUN DISABLE_ESLINT_PLUGIN='true' VITE_REACT_APP_VERSION="2026-07-17-b70183993" bun run build
+#24 1.153 $ rsbuild build
+#24 1.471 Rsbuild v2.0.1
+#24 1.471 
+#24 3.254 [1m[36minfo   [39m[22m build started...
+#24 ...
+
+#22 [builder-classic 7/7] RUN VITE_REACT_APP_VERSION="2026-07-17-b70183993" bun run build
+#22 3.240 vite v5.4.11 building for production...
+#22 3.616 transforming...
+#22 5.079 Browserslist: browsers data (caniuse-lite) is 14 months old. Please run:
+#22 5.079   npx update-browserslist-db@latest
+#22 5.079   Why you should do it regularly: https://github.com/browserslist/update-db#readme
+#22 ...
+
+#24 [builder 7/7] RUN DISABLE_ESLINT_PLUGIN='true' VITE_REACT_APP_VERSION="2026-07-17-b70183993" bun run build
+#24 18.36 [1m[32mready  [39m[22m built in [1m15.1[22m s
+#24 19.10 
+#24 19.10 [34mFile (web)                                                             Size         Gzip   [39m
+#24 19.10 [2mdist/static/js/async/[22m[36m6509.e5af9f0b79.js[39m                                0.15 kB      0.14 kB
+#24 19.10 [2mdist/static/js/async/[22m[36m3351.62e5f02276.js[39m                                0.15 kB      0.14 kB
+#24 19.10 [2mdist/static/js/async/[22m[36m3956.942c6ff4ef.js[39m                                0.15 kB      0.14 kB
+#24 19.10 [2mdist/static/js/async/[22m[36m5642.e6d192ced6.js[39m                                0.15 kB      0.14 kB
+#24 19.10 [2mdist/static/js/async/[22m[36m2500.49579662d6.js[39m                                0.15 kB      0.15 kB
+#24 19.10 [2mdist/static/js/async/[22m[36m6033.9107b6a69f.js[39m                                0.38 kB      0.28 kB
+#24 19.10 [2mdist/static/js/async/[22m[36m1190.390a175545.js[39m                                0.55 kB      0.37 kB
+#24 19.10 [2mdist/[22m[32mindex.html[39m                                                        0.72 kB      0.38 kB
+#24 19.10 [2mdist/static/js/async/[22m[36m1649.3850d9f27e.js[39m                                0.88 kB      0.51 kB
+#24 19.10 [2mdist/static/js/async/[22m[36m4994.755013d965.js[39m                                1.0 kB       0.57 kB
+#24 19.10 [2mdist/static/js/async/[22m[36m2748.197b2cfb56.js[39m                                1.0 kB       0.58 kB
+#24 19.10 [2mdist/static/js/async/[22m[36m9382.ee9920cab7.js[39m                                1.5 kB       0.86 kB
+#24 19.10 [2mdist/static/js/async/[22m[36m1475.4627b6c3de.js[39m                                1.6 kB       0.75 kB
+#24 19.10 [2mdist/static/js/async/[22m[36m9551.977449871c.js[39m                                2.1 kB       1.1 kB
+#24 19.10 [2mdist/static/js/async/[22m[36m4702.956e4db9a8.js[39m                                2.6 kB       1.2 kB
+#24 19.10 [2mdist/static/js/async/[22m[36m2092.1c4459abea.js[39m                                2.7 kB       1.4 kB
+#24 19.10 [2mdist/static/js/async/[22m[36m1873.4af17af9ca.js[39m                                2.8 kB       1.3 kB
+#24 19.10 [2mdist/static/js/async/[22m[36m8372.f2e352845a.js[39m                                3.1 kB       1.4 kB
+#24 19.10 [2mdist/static/js/async/[22m[36m7931.5541b18282.js[39m                                3.2 kB       1.0 kB
+#24 19.10 [2mdist/static/js/async/[22m[36m4828.5bd225013e.js[39m                                3.2 kB       1.5 kB
+#24 19.10 [2mdist/static/js/async/[22m[36m2990.d969f3fad7.js[39m                                3.3 kB       1.6 kB
+#24 19.10 [2mdist/static/js/async/[22m[36m3011.77f064a02e.js[39m                                3.3 kB       1.4 kB
+#24 19.10 [2mdist/static/js/async/[22m[36m6664.b1e71a01e7.js[39m                                3.3 kB       1.4 kB
+#24 19.10 [2mdist/static/js/async/[22m[36m7224.1949ec1222.js[39m                                3.4 kB       1.5 kB
+#24 19.10 [2mdist/static/js/async/[22m[36m4739.7a154d461b.js[39m                                4.0 kB       1.7 kB
+#24 19.10 [2mdist/static/js/async/[22m[36m3601.be950b8519.js[39m                                4.2 kB       1.8 kB
+#24 19.10 [2mdist/static/js/async/[22m[36m4867.eb4f3d0f58.js[39m                                4.9 kB       1.9 kB
+#24 19.10 [2mdist/static/js/async/[22m[36m863.2d8c5bdba1.js[39m                                 5.5 kB       2.1 kB
+#24 19.10 [2mdist/static/js/async/[22m[36m6726.a26bbc8032.js[39m                                6.3 kB       2.4 kB
+#24 19.10 [2mdist/static/js/async/[22m[36m1667.a95c2374ee.js[39m                                6.5 kB       2.4 kB
+#24 19.10 [2mdist/static/js/async/[22m[36m2957.09dbdd6a19.js[39m                                6.5 kB       2.4 kB
+#24 19.10 [2mdist/static/js/async/[22m[36m7459.dc4b1d6ce7.js[39m                                6.7 kB       2.6 kB
+#24 19.10 [2mdist/static/js/async/[22m[36m8627.07a8e1d9f3.js[39m                                6.9 kB       2.7 kB
+#24 19.10 [2mdist/static/js/async/[22m[36m7873.dddf797267.js[39m                                7.0 kB       2.5 kB
+#24 19.10 [2mdist/static/js/async/[22m[36m885.94c5722a14.js[39m                                 7.3 kB       2.7 kB
+#24 19.10 [2mdist/[22m[35mfavicon.ico[39m                                                       7.6 kB    
+#24 19.10 [2mdist/static/font/[22m[35mpublic-sans-vietnamese-wght-normal.7b0fa8550c.woff2[39m   7.7 kB    
+#24 19.10 [2mdist/static/js/async/[22m[36m3499.dd2523f2af.js[39m                                7.9 kB       3.0 kB
+#24 19.10 [2mdist/static/js/async/[22m[36m8441.f45a4ad6c9.js[39m                                8.2 kB       3.5 kB
+#24 19.10 [2mdist/static/js/async/[22m[36m1988.1607d2494d.js[39m                                8.6 kB       3.0 kB
+#24 19.10 [2mdist/static/js/async/[22m[36m2143.2c1a9053ef.js[39m                                9.0 kB       3.5 kB
+#24 19.10 [2mdist/static/js/async/[22m[36m6593.9607ee076b.js[39m                                9.2 kB       3.6 kB
+#24 19.10 [2mdist/static/js/async/[22m[36m8877.0d521f6276.js[39m                                9.4 kB       3.7 kB
+#24 19.10 [2mdist/static/js/async/[22m[36m8786.797416a9c5.js[39m                                9.8 kB       3.2 kB
+#24 19.10 [2mdist/static/font/[22m[35minter-vietnamese.113a630f76.woff2[39m                     10.3 kB   
+#24 19.10 [2mdist/static/js/async/[22m[36m6750.fc6372d412.js[39m                                11.6 kB      3.6 kB
+#24 19.10 [2mdist/static/js/async/[22m[36m5787.ec3cf0de9d.js[39m                                11.8 kB      4.4 kB
+#24 19.10 [2mdist/static/js/async/[22m[36m6237.a8ba934243.js[39m                                12.3 kB      4.7 kB
+#24 19.10 [2mdist/static/js/async/[22m[36m6264.f36796f244.js[39m                                12.3 kB      4.4 kB
+#24 19.10 [2mdist/static/js/async/[22m[36m8556.3e6ada8a46.js[39m                                12.3 kB      4.6 kB
+#24 19.10 [2mdist/static/js/async/[22m[36m8514.60b6c58706.js[39m                                12.4 kB      4.3 kB
+#24 19.10 [2mdist/static/js/async/[22m[36m875.6a9b2f9c33.js[39m                                 12.9 kB      4.1 kB
+#24 19.10 [2mdist/static/js/async/[22m[36m9006.715f6e0ad4.js[39m                                13.0 kB      5.8 kB
+#24 19.10 [2mdist/static/js/async/[22m[36m3717.19691e8ce6.js[39m                                13.6 kB      4.8 kB
+#24 19.10 [2mdist/static/js/async/[22m[36m2319.ab546d011a.js[39m                                14.0 kB      4.6 kB
+#24 19.10 [2mdist/static/js/async/[22m[36m1652.067e59daa4.js[39m                                14.1 kB      4.6 kB
+#24 19.10 [2mdist/static/js/async/[22m[36m3094.b39c4fe80f.js[39m                                14.9 kB      4.7 kB
+#24 19.10 [2mdist/static/css/async/[22m[33m2907.331bb81f20.css[39m                              15.6 kB      3.9 kB
+#24 19.10 [2mdist/static/font/[22m[35mpublic-sans-latin-ext-wght-normal.0afa0ba4c0.woff2[39m    18.5 kB   
+#24 19.10 [2mdist/static/js/async/[22m[36m3722.3f5eb7df9e.js[39m                                19.8 kB      6.2 kB
+#24 19.10 [2mdist/static/js/async/[22m[36m2649.c5b7a35a66.js[39m                                20.1 kB      4.7 kB
+#24 19.10 [2mdist/static/js/async/[22m[36m241.bb34018414.js[39m                                 20.3 kB      7.5 kB
+#24 19.10 [2mdist/static/js/async/[22m[36m344.ba1e668ea8.js[39m                                 20.5 kB      7.6 kB
+#24 19.10 [2mdist/static/font/[22m[35mjetbrains-mono-400.db9d659a1a.woff2[39m                   21.2 kB   
+#24 19.10 [2mdist/static/js/async/[22m[36m8331.c1252df12f.js[39m                                21.4 kB      6.1 kB
+#24 19.10 [2mdist/static/font/[22m[35mjetbrains-mono-600.ebeb24f1e7.woff2[39m                   21.9 kB   
+#24 19.10 [2mdist/static/js/async/[22m[36m7328.de2bf1bc5a.js[39m                                21.9 kB      7.3 kB
+#24 19.10 [2mdist/static/js/async/[22m[36m7950.6b4299513c.js[39m                                22.1 kB      7.4 kB
+#24 19.10 [2mdist/static/js/async/[22m[36m8195.bdbb011432.js[39m                                23.0 kB      7.1 kB
+#24 19.10 [2mdist/static/js/async/[22m[36m4128.f2eb9293ae.js[39m                                23.7 kB      7.3 kB
+#24 19.10 [2mdist/static/font/[22m[35mpublic-sans-latin-wght-normal.035c7fe496.woff2[39m        26.8 kB   
+#24 19.10 [2mdist/static/js/async/[22m[36m5633.9da86ace05.js[39m                                26.9 kB      8.7 kB
+#24 19.10 [2mdist/static/js/async/[22m[36m9844.40a693069b.js[39m                                28.8 kB      8.0 kB
+#24 19.10 [2mdist/static/css/async/[22m[33m9944.71c85765fa.css[39m                              29.5 kB      6.4 kB
+#24 19.10 [2mdist/static/js/async/[22m[36m8951.9fa062d2b0.js[39m                                30.3 kB      9.0 kB
+#24 19.10 [2mdist/static/js/async/[22m[36m2993.4900682165.js[39m                                30.7 kB      8.7 kB
+#24 19.10 [2mdist/static/js/async/[22m[36m2020.3a2107db81.js[39m                                31.5 kB      9.5 kB
+#24 19.10 [2mdist/static/css/async/[22m[33m8189.27ec5deddf.css[39m                              33.1 kB      7.8 kB
+#24 19.10 [2mdist/static/js/async/[22m[36m1194.4904fe2e66.js[39m                                43.2 kB      11.2 kB
+#24 19.10 [2mdist/static/js/async/[22m[36m9944.a870da7fb6.js[39m                                47.0 kB      12.1 kB
+#24 19.10 [2mdist/static/js/async/[22m[36m8189.739b451559.js[39m                                47.9 kB      14.4 kB
+#24 19.10 [2mdist/static/font/[22m[35minter-latin.6c596dfcdd.woff2[39m                          48.3 kB   
+#24 19.10 [2mdist/static/css/async/[22m[33m2496.f1b7b68d27.css[39m                              48.3 kB      9.3 kB
+#24 19.10 [2mdist/static/js/async/[22m[36m1642.461407eeaa.js[39m                                52.1 kB      12.1 kB
+#24 19.10 [2mdist/static/js/async/[22m[36m2907.7575c70a4b.js[39m                                57.2 kB      16.3 kB
+#24 19.10 [2mdist/static/js/async/[22m[36m755.33321078fd.js[39m                                 59.0 kB      16.9 kB
+#24 19.10 [2mdist/static/js/async/[22m[36m4263.c14a3b5ed9.js[39m                                59.3 kB      17.7 kB
+#24 19.10 [2mdist/static/js/async/[22m[36m8981.6d7743dc34.js[39m                                72.9 kB      20.3 kB
+#24 19.10 [2mdist/static/js/async/[22m[36m6516.938697015b.js[39m                                84.2 kB      21.9 kB
+#24 19.10 [2mdist/static/font/[22m[35minter-latin-ext.3835a68e46.woff2[39m                      85.1 kB   
+#24 19.10 [2mdist/static/js/async/[22m[36m7479.b7d68f249a.js[39m                                91.0 kB      23.1 kB
+#24 19.10 [2mdist/static/js/async/[22m[36m6248.6bbf6930e3.js[39m                                95.2 kB      26.2 kB
+#24 19.10 [2mdist/static/js/async/[22m[36m3032.1d1ba47fac.js[39m                                97.2 kB      26.0 kB
+#24 19.10 [2mdist/static/js/async/[22m[36m606.90479be476.js[39m                                 105.4 kB     28.1 kB
+#24 19.10 [2mdist/static/js/async/[22m[36m6287.cdde61a480.js[39m                                119.3 kB     38.9 kB
+#24 19.10 [2mdist/static/js/[22m[36mvendor-radix.23a400d302.js[39m                              134.6 kB     37.7 kB
+#24 19.10 [2mdist/static/js/async/[22m[36m8647.4d3f444259.js[39m                                139.9 kB     32.4 kB
+#24 19.10 [2mdist/static/image/[22m[35mbanner-video.99e67cc4a4.webp[39m                         140.0 kB  
+#24 19.10 [2mdist/static/image/[22m[35mbanner-image.10c0444867.webp[39m                         150.5 kB  
+#24 19.10 [2mdist/static/js/async/[22m[36m2977.703303ccb8.js[39m                                173.6 kB     52.8 kB
+#24 19.10 [2mdist/static/js/[22m[36mvendor-tanstack.661b8e1598.js[39m                           186.7 kB     53.9 kB
+#24 19.10 [2mdist/static/js/[22m[36mlib-react.5332daabae.js[39m                                 189.0 kB     59.7 kB
+#24 19.10 [2mdist/static/js/async/[22m[36m7567.829d162da6.js[39m                                245.3 kB     59.1 kB
+#24 19.10 [2mdist/static/css/[22m[33mindex.560b6f3f97.css[39m                                   538.5 kB     [33m230.3 kB[39m
+#24 19.10 [2mdist/static/js/[22m[36m4940.4440a55880.js[39m                                      959.6 kB     [33m273.6 kB[39m
+#24 19.10 [2mdist/static/js/async/[22m[36m4355.bf7e58c148.js[39m                                1935.4 kB    [31m526.6 kB[39m
+#24 19.10 [2mdist/static/js/[22m[36mindex.bad873ab43.js[39m                                     2600.9 kB    [31m694.3 kB[39m
+#24 19.10 [2mdist/static/js/async/[22m[36m2877.7ba91e7837.js[39m                                4879.4 kB    [31m921.9 kB[39m
+#24 19.10 
+#24 19.10                                                               [35mTotal:[39m   14343.4 kB   4020.7 kB
+#24 19.10 
+#24 DONE 19.4s
+
+#22 [builder-classic 7/7] RUN VITE_REACT_APP_VERSION="2026-07-17-b70183993" bun run build
+#22 ...
+
+#26 [builder2 6/9] COPY --from=builder /build/dist ./web/default/dist
+#26 DONE 0.1s
+
+#22 [builder-classic 7/7] RUN VITE_REACT_APP_VERSION="2026-07-17-b70183993" bun run build
+#22 30.16 node_modules/lottie-web/build/player/lottie.js (17010:32): Use of eval in "node_modules/lottie-web/build/player/lottie.js" is strongly discouraged as it poses security risks and may cause issues with minification.
+#22 50.60 ✓ 18030 modules transformed.
+#22 56.95 rendering chunks...
+#22 59.82 computing gzip size...
+#22 60.01 dist/index.html                                           1.59 kB │ gzip:     0.86 kB
+#22 60.01 dist/assets/KaTeX_Size3-Regular-CTq5MqoE.woff             4.42 kB
+#22 60.01 dist/assets/KaTeX_Size4-Regular-Dl5lxZxV.woff2            4.93 kB
+#22 60.01 dist/assets/KaTeX_Size2-Regular-Dy4dx90m.woff2            5.21 kB
+#22 60.01 dist/assets/KaTeX_Size1-Regular-mCD8mA8B.woff2            5.47 kB
+#22 60.01 dist/assets/KaTeX_Size4-Regular-BF-4gkZK.woff             5.98 kB
+#22 60.01 dist/assets/KaTeX_Size2-Regular-oD1tc_U0.woff             6.19 kB
+#22 60.01 dist/assets/KaTeX_Size1-Regular-C195tn64.woff             6.50 kB
+#22 60.01 dist/assets/KaTeX_Caligraphic-Regular-Di6jR-x-.woff2      6.91 kB
+#22 60.01 dist/assets/KaTeX_Caligraphic-Bold-Dq_IR9rO.woff2         6.91 kB
+#22 60.01 dist/assets/KaTeX_Size3-Regular-DgpXs0kz.ttf              7.59 kB
+#22 60.01 dist/assets/KaTeX_Caligraphic-Regular-CTRA-rTL.woff       7.66 kB
+#22 60.01 dist/assets/KaTeX_Caligraphic-Bold-BEiXGLvX.woff          7.72 kB
+#22 60.01 dist/assets/KaTeX_Script-Regular-D3wIWfF6.woff2           9.64 kB
+#22 60.01 dist/assets/KaTeX_SansSerif-Regular-DDBCnlJ7.woff2       10.34 kB
+#22 60.01 dist/assets/KaTeX_Size4-Regular-DWFBv043.ttf             10.36 kB
+#22 60.01 dist/assets/KaTeX_Script-Regular-D5yQViql.woff           10.59 kB
+#22 60.01 dist/assets/KaTeX_Fraktur-Regular-CTYiF6lA.woff2         11.32 kB
+#22 60.01 dist/assets/KaTeX_Fraktur-Bold-CL6g_b3V.woff2            11.35 kB
+#22 60.01 dist/assets/KaTeX_Size2-Regular-B7gKUWhC.ttf             11.51 kB
+#22 60.01 dist/assets/KaTeX_SansSerif-Italic-C3H0VqGB.woff2        12.03 kB
+#22 60.01 dist/assets/KaTeX_SansSerif-Bold-D1sUS0GD.woff2          12.22 kB
+#22 60.01 dist/assets/KaTeX_Size1-Regular-Dbsnue_I.ttf             12.23 kB
+#22 60.01 dist/assets/KaTeX_SansSerif-Regular-CS6fqUqJ.woff        12.32 kB
+#22 60.01 dist/assets/KaTeX_Caligraphic-Regular-wX97UBjC.ttf       12.34 kB
+#22 60.01 dist/assets/KaTeX_Caligraphic-Bold-ATXxdsX0.ttf          12.37 kB
+#22 60.01 dist/assets/KaTeX_Fraktur-Regular-Dxdc4cR9.woff          13.21 kB
+#22 60.01 dist/assets/KaTeX_Fraktur-Bold-BsDP51OF.woff             13.30 kB
+#22 60.01 dist/assets/KaTeX_Typewriter-Regular-CO6r4hn1.woff2      13.57 kB
+#22 60.01 dist/assets/KaTeX_SansSerif-Italic-DN2j7dab.woff         14.11 kB
+#22 60.01 dist/assets/KaTeX_SansSerif-Bold-DbIhKOiC.woff           14.41 kB
+#22 60.01 dist/assets/KaTeX_Typewriter-Regular-C0xS9mPB.woff       16.03 kB
+#22 60.01 dist/assets/KaTeX_Math-BoldItalic-CZnvNsCZ.woff2         16.40 kB
+#22 60.01 dist/assets/KaTeX_Math-Italic-t53AETM-.woff2             16.44 kB
+#22 60.01 dist/assets/KaTeX_Script-Regular-C5JkGWo-.ttf            16.65 kB
+#22 60.01 dist/assets/KaTeX_Main-BoldItalic-DxDJ3AOS.woff2         16.78 kB
+#22 60.01 dist/assets/KaTeX_Main-Italic-NWA7e6Wa.woff2             16.99 kB
+#22 60.01 dist/assets/KaTeX_Math-BoldItalic-iY-2wyZ7.woff          18.67 kB
+#22 60.01 dist/assets/KaTeX_Math-Italic-DA0__PXp.woff              18.75 kB
+#22 60.01 dist/assets/KaTeX_Main-BoldItalic-SpSLRI95.woff          19.41 kB
+#22 60.01 dist/assets/KaTeX_SansSerif-Regular-BNo7hRIc.ttf         19.44 kB
+#22 60.01 dist/assets/KaTeX_Fraktur-Regular-CB_wures.ttf           19.57 kB
+#22 60.01 dist/assets/KaTeX_Fraktur-Bold-BdnERNNW.ttf              19.58 kB
+#22 60.01 dist/assets/KaTeX_Main-Italic-BMLOBm91.woff              19.68 kB
+#22 60.01 dist/assets/KaTeX_SansSerif-Italic-YYjJ1zSn.ttf          22.36 kB
+#22 60.01 dist/assets/KaTeX_SansSerif-Bold-CFMepnvq.ttf            24.50 kB
+#22 60.01 dist/assets/KaTeX_Main-Bold-Cx986IdX.woff2               25.32 kB
+#22 60.01 dist/assets/KaTeX_Main-Regular-B22Nviop.woff2            26.27 kB
+#22 60.01 dist/assets/KaTeX_Typewriter-Regular-D3Ib7_Hf.ttf        27.56 kB
+#22 60.01 dist/assets/KaTeX_AMS-Regular-BQhdFMY1.woff2             28.08 kB
+#22 60.01 dist/assets/KaTeX_Main-Bold-Jm3AIy58.woff                29.91 kB
+#22 60.01 dist/assets/KaTeX_Main-Regular-Dr94JaBh.woff             30.77 kB
+#22 60.01 dist/assets/KaTeX_Math-BoldItalic-B3XSjfu4.ttf           31.20 kB
+#22 60.01 dist/assets/KaTeX_Math-Italic-flOr_0UB.ttf               31.31 kB
+#22 60.01 dist/assets/KaTeX_Main-BoldItalic-DzxPMmG6.ttf           32.97 kB
+#22 60.01 dist/assets/KaTeX_AMS-Regular-DMm9YOAa.woff              33.52 kB
+#22 60.01 dist/assets/KaTeX_Main-Italic-3WenGoN9.ttf               33.58 kB
+#22 60.01 dist/assets/KaTeX_Main-Bold-waoOVXN0.ttf                 51.34 kB
+#22 60.01 dist/assets/KaTeX_Main-Regular-ypZvNtVU.ttf              53.58 kB
+#22 60.01 dist/assets/KaTeX_AMS-Regular-DRggAlZN.ttf               63.63 kB
+#22 60.01 dist/assets/semi-ui-yRXI6evF.css                        582.68 kB │ gzip:    65.49 kB
+#22 60.01 dist/assets/index-UfzNzYYF.css                          672.71 kB │ gzip:    86.83 kB
+#22 60.01 dist/assets/clone-B2O89C9M.js                             0.10 kB │ gzip:     0.11 kB
+#22 60.01 dist/assets/channel-DWN3ahLI.js                           0.11 kB │ gzip:     0.12 kB
+#22 60.01 dist/assets/init-Gi6I4Gst.js                              0.15 kB │ gzip:     0.13 kB
+#22 60.01 dist/assets/chunk-XZIHB7SX-CzBCp6jI.js                    0.19 kB │ gzip:     0.16 kB
+#22 60.01 dist/assets/chunk-4BMEZGHF-Rq4dDxws.js                    0.29 kB │ gzip:     0.20 kB
+#22 60.01 dist/assets/index-DDgYDLtM.js                             0.47 kB │ gzip:     0.37 kB
+#22 60.01 dist/assets/index-Dsyb8y8e.js                             0.47 kB │ gzip:     0.37 kB
+#22 60.01 dist/assets/classDiagram-GIVACNV2-Dn_vv_Qy.js             0.48 kB │ gzip:     0.32 kB
+#22 60.01 dist/assets/classDiagram-v2-COTLJTTW-Dn_vv_Qy.js          0.48 kB │ gzip:     0.32 kB
+#22 60.01 dist/assets/stateDiagram-v2-YXO3MK2T-BcLxNVpz.js          0.48 kB │ gzip:     0.32 kB
+#22 60.01 dist/assets/chunk-RZ5BOZE2-CFmyyM1L.js                    0.70 kB │ gzip:     0.47 kB
+#22 60.01 dist/assets/infoDiagram-PH2N3AL5-B9Cjeb_t.js              0.81 kB │ gzip:     0.51 kB
+#22 60.01 dist/assets/ordinal-Cboi1Yqb.js                           1.19 kB │ gzip:     0.57 kB
+#22 60.01 dist/assets/chunk-D6G4REZN-C5rEP-Hd.js                    1.41 kB │ gzip:     0.62 kB
+#22 60.01 dist/assets/_basePickBy-C0QGWRYD.js                       2.58 kB │ gzip:     1.29 kB
+#22 60.01 dist/assets/index-B2BdIGiR.js                             2.75 kB │ gzip:     1.31 kB
+#22 60.01 dist/assets/index-Cz5mZSa1.js                             3.07 kB │ gzip:     1.41 kB
+#22 60.01 dist/assets/arc-C1CS3CDq.js                               3.43 kB │ gzip:     1.48 kB
+#22 60.01 dist/assets/diagram-VNBRO52H-Cx6D8Siw.js                  3.86 kB │ gzip:     1.74 kB
+#22 60.01 dist/assets/pieDiagram-IB7DONF6-DTXZAq-L.js               5.10 kB │ gzip:     2.29 kB
+#22 60.01 dist/assets/graph-D2rbNV3X.js                             5.91 kB │ gzip:     1.87 kB
+#22 60.01 dist/assets/diagram-SSKATNLV-YoR8neEK.js                  6.18 kB │ gzip:     2.61 kB
+#22 60.01 dist/assets/index-DZ_Mw150.js                             7.80 kB │ gzip:     2.42 kB
+#22 60.01 dist/assets/linear-BSbl7RLF.js                           10.17 kB │ gzip:     4.25 kB
+#22 60.01 dist/assets/stateDiagram-DGXRK772-GdFDb5_k.js            10.77 kB │ gzip:     3.81 kB
+#22 60.01 dist/assets/_baseUniq-C_f6-ldD.js                        11.38 kB │ gzip:     4.51 kB
+#22 60.01 dist/assets/dagre-OKDRZEBW-T0Mqcyrc.js                   11.39 kB │ gzip:     4.27 kB
+#22 60.01 dist/assets/kanban-definition-NDS4AKOZ-BL9vawDR.js       20.67 kB │ gzip:     7.28 kB
+#22 60.01 dist/assets/IllustrationConstruction-BfOYqVqj.js         20.76 kB │ gzip:     4.67 kB
+#22 60.01 dist/assets/sankeyDiagram-QLVOVGJD-BzpX-iUi.js           22.80 kB │ gzip:     8.35 kB
+#22 60.01 dist/assets/journeyDiagram-U35MCT3I-Drzw7g5U.js          22.82 kB │ gzip:     8.08 kB
+#22 60.01 dist/assets/timeline-definition-BDJGKUSR-CKsgMEc2.js     23.76 kB │ gzip:     8.33 kB
+#22 60.01 dist/assets/gitGraphDiagram-7IBYFJ6S-CuZyTeDS.js         24.78 kB │ gzip:     7.65 kB
+#22 60.01 dist/assets/erDiagram-Q7BY3M3F-DHXJxcVz.js               25.42 kB │ gzip:     8.91 kB
+#22 60.01 dist/assets/layout-DUfYKZ0h.js                           27.18 kB │ gzip:     9.66 kB
+#22 60.01 dist/assets/react-components-BnylIsR_.js                 27.82 kB │ gzip:    10.83 kB
+#22 60.01 dist/assets/requirementDiagram-KVF5MWMF-OD3DuoZW.js      30.35 kB │ gzip:     9.54 kB
+#22 60.01 dist/assets/quadrantDiagram-7GDLP6J5-DVHqI3Ro.js         34.40 kB │ gzip:    10.15 kB
+#22 60.01 dist/assets/chunk-AEK57VVT-Cho2AA-p.js                   35.07 kB │ gzip:    11.29 kB
+#22 60.01 dist/assets/xychartDiagram-VJFVF3MP-NCts3rf_.js          38.84 kB │ gzip:    11.05 kB
+#22 60.01 dist/assets/chunk-A2AXSNBT-CFIT35Fi.js                   45.12 kB │ gzip:    14.64 kB
+#22 60.01 dist/assets/i18n-RrXBN1CV.js                             60.37 kB │ gzip:    18.53 kB
+#22 60.01 dist/assets/flowDiagram-4HSFHLVR-C4-bcpIT.js             60.96 kB │ gzip:    19.55 kB
+#22 60.01 dist/assets/ganttDiagram-APWFNJXF-BIzabiN9.js            62.06 kB │ gzip:    21.12 kB
+#22 60.01 dist/assets/c4Diagram-VJAJSXHY-qd1CLrsC.js               70.26 kB │ gzip:    19.75 kB
+#22 60.01 dist/assets/blockDiagram-JOT3LUYC-CwRF1uGP.js            72.94 kB │ gzip:    20.77 kB
+#22 60.01 dist/assets/tools-PDT6Ig-2.js                            77.42 kB │ gzip:    27.67 kB
+#22 60.01 dist/assets/sequenceDiagram-X6HHIX6F-CBvqJiuJ.js         88.69 kB │ gzip:    25.39 kB
+#22 60.01 dist/assets/mindmap-definition-ALO5MXBD-_K3v6-qi.js     101.08 kB │ gzip:    28.60 kB
+#22 60.01 dist/assets/architectureDiagram-IEHRJDOE-CCv1n2pO.js    148.45 kB │ gzip:    42.04 kB
+#22 60.01 dist/assets/react-core-D-iPSUlg.js                      163.88 kB │ gzip:    53.53 kB
+#22 60.01 dist/assets/radar-MK3ICKWK-CmxSdIEJ.js                  314.53 kB │ gzip:    78.84 kB
+#22 60.01 dist/assets/cytoscape.esm-BY7v1xhs.js                   438.68 kB │ gzip:   140.32 kB
+#22 60.01 dist/assets/semi-ui-BzZ1UhpZ.js                       1,811.71 kB │ gzip:   510.26 kB
+#22 60.01 dist/assets/index-PPqBEwBd.js                         1,941.48 kB │ gzip:   511.53 kB
+#22 60.01 dist/assets/index-DU2XQBkF.js                         7,465.27 kB │ gzip: 2,059.80 kB
+#22 60.01 
+#22 60.01 (!) Some chunks are larger than 500 kB after minification. Consider:
+#22 60.01 - Using dynamic import() to code-split the application
+#22 60.01 - Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks
+#22 60.01 - Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+#22 60.01 ✓ built in 56.50s
+#22 DONE 60.5s
+
+#27 [builder2 7/9] COPY --from=builder-classic /build/dist ./web/classic/dist
+#27 DONE 0.1s
+
+#28 [builder2 8/9] RUN [ "2026-07-17-b70183993" != "dev" ] || { echo 'REFUSED: unstamped build (VERSION=dev). Build via scripts/build-new-api.sh'; exit 1; }
+#28 DONE 0.2s
+
+#29 [builder2 9/9] RUN go build -buildvcs=false -ldflags "-s -w   -X 'github.com/QuantumNous/new-api/common.Version=2026-07-17-b70183993'   -X 'github.com/QuantumNous/new-api/common.Commit=b70183993'   -X 'github.com/QuantumNous/new-api/common.BuildTime=2026-07-17T18:46:59Z'" -o new-api
+#29 DONE 43.3s
+
+#30 [stage-3 2/4] RUN apt-get update     && apt-get install -y --no-install-recommends ca-certificates tzdata libasan8 wget     && rm -rf /var/lib/apt/lists/*     && update-ca-certificates
+#30 CACHED
+
+#31 [stage-3 3/4] COPY --from=builder2 /build/new-api /
+#31 DONE 0.1s
+
+#32 [stage-3 4/4] WORKDIR /data
+#32 DONE 0.1s
+
+#33 exporting to image
+#33 exporting layers
+#33 exporting layers 2.2s done
+#33 exporting manifest sha256:b2ea4fb4814d5ad546652f54fc8701ffb486a9e4945ae5dcbbd4b12105605a2b 0.0s done
+#33 exporting config sha256:de0ac9302645eccfd113ef9221dc1b081854da8087f606dfa43d7c922d36a5fa 0.0s done
+#33 exporting attestation manifest sha256:38e0a1d914049336444277566860316918141beaf8ee68e2d607d0857da8438b 0.0s done
+#33 exporting manifest list sha256:069a3b0e2fafcd48332708b45c6dfa5c7424dd8459880fef05917aa6cf581070 0.0s done
+#33 naming to docker.io/newapi-superup/new-api:upgradev2
+#33 naming to docker.io/newapi-superup/new-api:upgradev2 done
+#33 unpacking to docker.io/newapi-superup/new-api:upgradev2
+#33 unpacking to docker.io/newapi-superup/new-api:upgradev2 0.4s done
+#33 DONE 2.7s
+
+#34 resolving provenance for metadata file
+#34 DONE 0.0s
+ newapi-superup/new-api:upgradev2  Built
+==> [6/6] Tag :VERSION + record in BUILD_LEDGER.md
+
+BUILD OK  version=2026-07-17-b70183993  commit=b70183993  image=069a3b0e2faf  (tag :2026-07-17-b70183993)
+  feature: overview: compact Spend-chart currency labels (fix large VND y-axis overflow)
+DEPLOY:  cd /root/NewApi-SuperUp && scripts/rolling-deploy-new-api.sh   # NO --load (image already local)
+VERIFY:  curl -s https://superup.codelypixverse.com/api/status | jq -r .data.version   # must == 2026-07-17-b70183993 (never 'dev'/'-dirty')
+ROLLBACK: docker tag newapi-superup/new-api:rollback-<ts> newapi-superup/new-api:upgradev2 && scripts/rolling-deploy-new-api.sh

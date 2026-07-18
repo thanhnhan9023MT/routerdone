@@ -1,0 +1,203 @@
+[stage] build → green:20130 (2-core cap)
+
+> routerdone-app@0.5.115 build
+> node scripts/next-build.mjs
+
+▲ Next.js 16.2.9 (webpack)
+- Experiments (use with caution):
+  · proxyClientMaxBodySize: "128mb"
+
+  Creating an optimized production build ...
+✓ Compiled successfully in 46s
+  Running TypeScript ...
+  Finished TypeScript in 196ms ...
+  Collecting page data using 5 workers ...
+[DB] Driver: better-sqlite3 | file: /home/routerdone/routerdone/.next-build-home/AppData/Roaming/routerdone/db/data.sqlite
+[DB] Driver: better-sqlite3 | file: /home/routerdone/routerdone/.next-build-home/AppData/Roaming/routerdone/db/data.sqlite
+[DB] Driver: better-sqlite3 | file: /home/routerdone/routerdone/.next-build-home/AppData/Roaming/routerdone/db/data.sqlite
+[DB] Driver: better-sqlite3 | file: /home/routerdone/routerdone/.next-build-home/AppData/Roaming/routerdone/db/data.sqlite
+[DB] Driver: better-sqlite3 | file: /home/routerdone/routerdone/.next-build-home/AppData/Roaming/routerdone/db/data.sqlite
+  Generating static pages using 5 workers (0/124) ...
+  Generating static pages using 5 workers (31/124) 
+  Generating static pages using 5 workers (62/124) 
+  Generating static pages using 5 workers (93/124) 
+✓ Generating static pages using 5 workers (124/124) in 1067ms
+  Finalizing page optimization ...
+  Collecting build traces ...
+
+Route (app)
+┌ ○ /
+├ ○ /_not-found
+├ ○ /admin
+├ ƒ /api/auth/login
+├ ƒ /api/auth/logout
+├ ƒ /api/auth/oidc/callback
+├ ƒ /api/auth/oidc/start
+├ ƒ /api/auth/oidc/test
+├ ƒ /api/auth/reset-password
+├ ƒ /api/auth/status
+├ ƒ /api/cli-tools/all-statuses
+├ ƒ /api/cli-tools/antigravity-mitm
+├ ƒ /api/cli-tools/antigravity-mitm/alias
+├ ƒ /api/cli-tools/claude-settings
+├ ƒ /api/cli-tools/cline-settings
+├ ƒ /api/cli-tools/codex-settings
+├ ƒ /api/cli-tools/copilot-settings
+├ ƒ /api/cli-tools/cowork-mcp-registry
+├ ƒ /api/cli-tools/cowork-mcp-tools
+├ ƒ /api/cli-tools/cowork-settings
+├ ƒ /api/cli-tools/deepseek-tui-settings
+├ ƒ /api/cli-tools/droid-settings
+├ ƒ /api/cli-tools/hermes-settings
+├ ƒ /api/cli-tools/jcode-settings
+├ ƒ /api/cli-tools/kilo-settings
+├ ƒ /api/cli-tools/openclaw-settings
+├ ƒ /api/cli-tools/opencode-settings
+├ ƒ /api/combos
+├ ƒ /api/combos/[id]
+├ ƒ /api/dashboard/chat/completions
+├ ƒ /api/headroom/proxy/[...path]
+├ ƒ /api/headroom/start
+├ ƒ /api/headroom/status
+├ ƒ /api/headroom/stop
+├ ƒ /api/health
+├ ƒ /api/init
+├ ƒ /api/keys
+├ ƒ /api/keys/[id]
+├ ƒ /api/keys/[id]/reset-usage
+├ ƒ /api/locale
+├ ƒ /api/mcp/[plugin]/message
+├ ƒ /api/mcp/[plugin]/sse
+├ ƒ /api/media-providers/tts/deepgram/voices
+├ ƒ /api/media-providers/tts/elevenlabs/voices
+├ ƒ /api/media-providers/tts/inworld/voices
+├ ƒ /api/media-providers/tts/minimax/voices
+├ ƒ /api/media-providers/tts/voices
+├ ƒ /api/models
+├ ƒ /api/models/alias
+├ ƒ /api/models/availability
+├ ƒ /api/models/custom
+├ ƒ /api/models/disabled
+├ ƒ /api/models/test
+├ ƒ /api/oauth/[provider]/[action]
+├ ƒ /api/oauth/codex/bulk-import
+├ ƒ /api/oauth/codex/import-token
+├ ƒ /api/oauth/cursor/auto-import
+├ ƒ /api/oauth/cursor/import
+├ ƒ /api/oauth/gitlab/pat
+├ ƒ /api/oauth/iflow/cookie
+├ ƒ /api/oauth/kiro/api-key
+├ ƒ /api/oauth/kiro/auto-import
+├ ƒ /api/oauth/kiro/import
+├ ƒ /api/oauth/kiro/social-authorize
+├ ƒ /api/oauth/kiro/social-exchange
+├ ƒ /api/pricing
+├ ƒ /api/provider-nodes
+├ ƒ /api/provider-nodes/[id]
+├ ƒ /api/provider-nodes/validate
+├ ƒ /api/providers
+├ ƒ /api/providers/[id]
+├ ƒ /api/providers/[id]/models
+├ ƒ /api/providers/[id]/test
+├ ƒ /api/providers/[id]/test-models
+├ ƒ /api/providers/client
+├ ƒ /api/providers/kilo/free-models
+├ ƒ /api/providers/suggested-models
+├ ƒ /api/providers/test-batch
+├ ƒ /api/providers/validate
+├ ƒ /api/proxy-pools
+├ ƒ /api/proxy-pools/[id]
+├ ƒ /api/proxy-pools/[id]/test
+├ ƒ /api/proxy-pools/cloudflare-deploy
+├ ƒ /api/proxy-pools/deno-deploy
+├ ƒ /api/proxy-pools/vercel-deploy
+├ ƒ /api/settings
+├ ƒ /api/settings/database
+├ ƒ /api/settings/proxy-test
+├ ƒ /api/settings/require-login
+├ ƒ /api/shutdown
+├ ƒ /api/tags
+├ ƒ /api/translator/console-logs
+├ ƒ /api/translator/console-logs/stream
+├ ƒ /api/translator/load
+├ ƒ /api/translator/save
+├ ƒ /api/translator/send
+├ ƒ /api/translator/translate
+├ ƒ /api/tunnel/disable
+├ ƒ /api/tunnel/enable
+├ ƒ /api/tunnel/status
+├ ƒ /api/tunnel/tailscale-check
+├ ƒ /api/tunnel/tailscale-disable
+├ ƒ /api/tunnel/tailscale-enable
+├ ƒ /api/tunnel/tailscale-install
+├ ƒ /api/usage/[connectionId]
+├ ƒ /api/usage/[connectionId]/codex-reset-credits
+├ ƒ /api/usage/batch
+├ ƒ /api/usage/chart
+├ ƒ /api/usage/history
+├ ƒ /api/usage/logs
+├ ƒ /api/usage/providers
+├ ƒ /api/usage/request-details
+├ ƒ /api/usage/request-logs
+├ ƒ /api/usage/stats
+├ ƒ /api/usage/stream
+├ ƒ /api/v1
+├ ƒ /api/v1/api/chat
+├ ƒ /api/v1/audio/speech
+├ ƒ /api/v1/audio/transcriptions
+├ ƒ /api/v1/audio/voices
+├ ƒ /api/v1/chat/completions
+├ ƒ /api/v1/embeddings
+├ ƒ /api/v1/images/generations
+├ ƒ /api/v1/messages
+├ ƒ /api/v1/messages/count_tokens
+├ ƒ /api/v1/models
+├ ƒ /api/v1/models/[kind]
+├ ƒ /api/v1/models/info
+├ ƒ /api/v1/responses
+├ ƒ /api/v1/responses/compact
+├ ƒ /api/v1/search
+├ ƒ /api/v1/web/fetch
+├ ƒ /api/v1beta/models
+├ ƒ /api/v1beta/models/[...path]
+├ ƒ /api/version
+├ ƒ /api/version/shutdown
+├ ƒ /api/version/update
+├ ○ /callback
+├ ○ /dashboard
+├ ○ /dashboard/basic-chat
+├ ○ /dashboard/cli-tools
+├ ƒ /dashboard/cli-tools/[toolId]
+├ ○ /dashboard/combos
+├ ƒ /dashboard/console-log
+├ ○ /dashboard/endpoint
+├ ƒ /dashboard/media-providers/[kind]
+├ ƒ /dashboard/media-providers/[kind]/[id]
+├ ƒ /dashboard/media-providers/combo/[id]
+├ ○ /dashboard/media-providers/web
+├ ○ /dashboard/mitm
+├ ○ /dashboard/profile
+├ ○ /dashboard/providers
+├ ƒ /dashboard/providers/[id]
+├ ○ /dashboard/providers/new
+├ ○ /dashboard/proxy-pools
+├ ○ /dashboard/quota
+├ ○ /dashboard/settings/pricing
+├ ○ /dashboard/skills
+├ ○ /dashboard/translator
+├ ○ /dashboard/usage
+├ ○ /landing
+├ ƒ /login
+└ ○ /manifest.webmanifest
+
+
+ƒ Proxy (Middleware)
+
+○  (Static)   prerendered as static content
+ƒ  (Dynamic)  server-rendered on demand
+
+[stage] rsync → /home/routerdone/routerdone-deploy/releases/20260718T102927Z-green
+[stage] restart routerdone-app@green
+curl: (7) Failed to connect to 127.0.0.1 port 20130 after 0 ms: Couldn't connect to server
+[stage] DONE green healthy 20130, NOT switched
+RELEASE=20260718T102927Z-green
