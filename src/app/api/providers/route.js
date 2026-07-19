@@ -150,10 +150,13 @@ export async function POST(request) {
         return NextResponse.json({ error: "Only one connection is allowed for this OpenAI Compatible node" }, { status: 400 });
       }
       providerSpecificData = {
+        ...(node.data || {}),
         prefix: node.prefix,
         apiType: node.apiType,
         baseUrl: node.baseUrl,
         nodeName: node.name,
+        runtimeProfile: node.runtimeProfile || node.data?.runtimeProfile || "standard",
+        ...(node.transport || node.data?.transport ? { transport: node.transport || node.data.transport } : {}),
       };
     } else if (isAnthropicCompatibleProvider(provider)) {
       const node = await getProviderNodeById(provider);

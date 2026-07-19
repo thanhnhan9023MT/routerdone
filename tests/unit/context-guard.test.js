@@ -280,6 +280,93 @@ describe("pruneContextToHardCap", () => {
     expect(body.input[4].content).toBe("recent user");
   });
 
+  it("preserves Responses and Chat image URLs byte-for-byte", () => {
+    const imageUrl = `data:image/png;base64,${"a".repeat(1400)}`;
+    for (const body of [
+      {
+        input: [
+          { role: "user", content: [{ type: "input_image", image_url: imageUrl }, { type: "input_text", text: "T".repeat(1800) }] },
+          { role: "user", content: "recent" },
+        ],
+      },
+      {
+        messages: [
+          { role: "user", content: [{ type: "image_url", image_url: { url: imageUrl } }, { type: "text", text: "T".repeat(1800) }] },
+          { role: "user", content: "recent" },
+        ],
+      },
+    ]) {
+      const items = body.input || body.messages;
+      const stats = pruneContextToHardCap(body, { hardCapTokens: 400, keepRecent: 1, model: "gpt-5" });
+      expect(stats.trimmedStrings).toBeGreaterThan(0);
+      const image = items[0].content[0];
+      const actual = typeof image.image_url === "string" ? image.image_url : image.image_url.url;
+      expect(actual).toBe(imageUrl);
+      expect(items[0].content[1].text).toContain("[trimmed by RouterDone context guard]");
+    }
+  });
+
+  it("preserves Claude and Gemini inline image payloads", () => {
+    const imageData = "a".repeat(1400);
+    const bodies = [
+      {
+        body: {
+          messages: [
+            { role: "user", content: [{ type: "image", source: { type: "base64", media_type: "image/png", data: imageData } }, { type: "text", text: "T".repeat(1800) }] },
+            { role: "user", content: "recent" },
+          ],
+        },
+        image: (body) => body.messages[0].content[0].source.data,
+        text: (body) => body.messages[0].content[1].text,
+      },
+      {
+        body: {
+          contents: [
+            { role: "user", parts: [{ inlineData: { mimeType: "image/png", data: imageData } }, { text: "T".repeat(1800) }] },
+            { role: "user", parts: [{ text: "recent" }] },
+          ],
+        },
+        image: (body) => body.contents[0].parts[0].inlineData.data,
+        text: (body) => body.contents[0].parts[1].text,
+      },
+    ];
+
+    for (const { body, image, text } of bodies) {
+      const stats = pruneContextToHardCap(body, { hardCapTokens: 400, keepRecent: 1, model: "gpt-5" });
+      expect(stats.trimmedStrings).toBeGreaterThan(0);
+      expect(image(body)).toBe(imageData);
+      expect(text(body)).toContain("[trimmed by RouterDone context guard]");
+    }
+  });
+
+  it("preserves Ollama raw base64 image arrays", () => {
+    const imageData = "a".repeat(1800);
+    const body = {
+      messages: [
+        { role: "user", content: "T".repeat(1800), images: [imageData] },
+        { role: "user", content: "recent" },
+      ],
+    };
+    const stats = pruneContextToHardCap(body, { hardCapTokens: 400, keepRecent: 1, model: "gpt-5" });
+    expect(stats.trimmedStrings).toBeGreaterThan(0);
+    expect(body.messages[0].images[0]).toBe(imageData);
+    expect(body.messages[0].content).toContain("[trimmed by RouterDone context guard]");
+  });
+
+  it("leaves an image-only request above the cap instead of damaging it", () => {
+    const imageUrl = `data:image/png;base64,${"a".repeat(8000)}`;
+    const body = {
+      input: [
+        { role: "user", content: [{ type: "input_image", image_url: imageUrl }] },
+        { role: "user", content: "recent" },
+      ],
+    };
+    const hardCapTokens = Math.floor(estimateInputTokens(body, "gpt-5") * 0.5);
+    expect(pruneContextToHardCap(body, { hardCapTokens, keepRecent: 1, model: "gpt-5" })).toBeNull();
+    expect(body.input[0].content[0].image_url).toBe(imageUrl);
+    expect(estimateInputTokens(body, "gpt-5")).toBeGreaterThan(hardCapTokens);
+  });
+
   it("formats hard-cap prune logs", () => {
     const line = formatHardCapPruneLog({ trimmedStrings: 2, savedBytes: 2048, estTokensBefore: 10000, estTokensAfter: 8000, hardCapTokens: 9000 });
     expect(line).toContain("pruned 2 old string fields");

@@ -82,8 +82,8 @@ Danh sach file lien quan den ban RouterDone public, nhom theo chuc nang.
 |--------------|-------|
 | `.git/` | Khong giu history cu |
 | `.agents/` | Codekit internal |
-| `rules/` | Release/patch gate thoa100m-specific |
-| `AGENTS.md` | thoa100m/llmGateway/Codekit |
+| `rules/` | Internal release/patch gate |
+| `AGENTS.md` | Internal owner/repository/Codekit metadata |
 | `cloud/` | Cloudflare worker, hardcoded secret, owner infra |
 | `skills/` | upstream CLI skills (branded) |
 | `tester/` | Internal test scratch |

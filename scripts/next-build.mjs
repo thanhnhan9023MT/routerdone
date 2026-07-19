@@ -8,6 +8,9 @@ const buildHome = path.join(projectRoot, ".next-build-home");
 const roamingAppData = path.join(buildHome, "AppData", "Roaming");
 const localAppData = path.join(buildHome, "AppData", "Local");
 const dataDir = path.join(roamingAppData, "routerdone");
+// Build-home is disposable. Reusing it keeps stale DB backup paths in Next
+// file tracing after migrations prune those backups during a later build.
+fs.rmSync(buildHome, { recursive: true, force: true });
 
 for (const dir of [roamingAppData, localAppData, dataDir]) {
   fs.mkdirSync(dir, { recursive: true });

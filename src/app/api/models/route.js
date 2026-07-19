@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
-import { getModelAliases, setModelAlias } from "@/models";
+import { getModelAliases, setModelAlias, getCustomModels, getProviderConnections } from "@/models";
 import { getDisabledModels } from "@/lib/disabledModelsDb";
-import { AI_MODELS } from "@/shared/constants/config";
+import { AI_MODELS, PROVIDER_MODELS, PROVIDER_ID_TO_ALIAS } from "@/shared/constants/models";
 import { getProviderAlias } from "@/shared/constants/providers";
 import { getCapabilitiesForModel } from "open-sse/providers/capabilities.js";
 
@@ -10,6 +10,8 @@ export async function GET() {
   try {
     const modelAliases = await getModelAliases();
     const disabled = await getDisabledModels();
+    const customModels = await getCustomModels();
+    const connections = await getProviderConnections();
 
     const models = AI_MODELS
       .filter((m) => {
@@ -28,6 +30,28 @@ export async function GET() {
         };
       });
 
+    const providerIdByAlias = Object.fromEntries(Object.entries(PROVIDER_ID_TO_ALIAS || {}).map(([id, alias]) => [alias, id]));
+    for (const [alias, providerModels] of Object.entries(PROVIDER_MODELS || {})) {
+      for (const item of providerModels || []) {
+        const modelId = item?.id || item?.model;
+        if (!modelId) continue;
+        const fullModel = `${alias}/${modelId}`;
+        const disabledList = disabled[alias] || disabled[providerIdByAlias[alias]] || [];
+        if (disabledList.includes(modelId) || models.some((m) => m.fullModel === fullModel)) continue;
+        const c = getCapabilitiesForModel(providerIdByAlias[alias] || alias, modelId);
+        models.push({ provider: alias, model: modelId, fullModel, alias: modelAliases[fullModel] || item.name || modelId, caps: { vision: c.vision, search: c.search, reasoning: c.reasoning } });
+      }
+    }
+    for (const conn of connections || []) {
+      const prefix = conn?.providerSpecificData?.prefix || conn?.provider;
+      if (!prefix || !Array.isArray(conn?.models)) continue;
+      for (const id of conn.models) {
+        const fullModel = `${prefix}/${String(id).trim()}`;
+        if (!id || seen.has(fullModel)) continue;
+        seen.add(fullModel);
+        models.push({ provider: prefix, model: id, fullModel, alias: id, caps: {} });
+      }
+    }
     return NextResponse.json({ models });
   } catch (error) {
     console.log("Error fetching models:", error);

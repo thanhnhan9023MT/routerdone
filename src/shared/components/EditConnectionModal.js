@@ -13,6 +13,12 @@ export default function EditConnectionModal({ isOpen, connection, proxyPools, on
     name: "",
     priority: 1,
     apiKey: "",
+    runtimeProfile: "standard",
+    baseUrl: "",
+    connectTimeoutMs: "",
+    requestTimeoutMs: "",
+    streamTimeoutMs: "",
+    streamIdleTimeoutMs: "",
   });
   const [azureData, setAzureData] = useState({
     azureEndpoint: "",
@@ -33,6 +39,12 @@ export default function EditConnectionModal({ isOpen, connection, proxyPools, on
         name: connection.name || "",
         priority: connection.priority || 1,
         apiKey: "",
+        runtimeProfile: connection.providerSpecificData?.runtimeProfile || "standard",
+        baseUrl: connection.providerSpecificData?.baseUrl || "",
+        connectTimeoutMs: connection.providerSpecificData?.connectTimeoutMs ?? "",
+        requestTimeoutMs: connection.providerSpecificData?.requestTimeoutMs ?? "",
+        streamTimeoutMs: connection.providerSpecificData?.streamTimeoutMs ?? "",
+        streamIdleTimeoutMs: connection.providerSpecificData?.streamIdleTimeoutMs ?? "",
       });
       // Load Azure-specific data if present
       if (connection.provider === "azure" && connection.providerSpecificData) {
@@ -105,6 +117,19 @@ export default function EditConnectionModal({ isOpen, connection, proxyPools, on
         name: formData.name,
         priority: formData.priority,
       };
+      if (isCompatible) {
+        const transport = {};
+        for (const field of ["connectTimeoutMs", "requestTimeoutMs", "streamTimeoutMs", "streamIdleTimeoutMs"]) {
+          const value = String(formData[field]).trim();
+          if (value) transport[field] = Math.max(0, Number(value) || 0);
+        }
+        updates.providerSpecificData = {
+          ...(connection.providerSpecificData || {}),
+          runtimeProfile: formData.runtimeProfile,
+          baseUrl: formData.baseUrl.trim(),
+          ...transport,
+        };
+      }
       if (!isOAuth && formData.apiKey) {
         updates.apiKey = formData.apiKey;
         let isValid = validationResult === "success";
@@ -180,6 +205,26 @@ export default function EditConnectionModal({ isOpen, connection, proxyPools, on
           value={formData.priority}
           onChange={(e) => setFormData({ ...formData, priority: Number.parseInt(e.target.value, 10) || 1 })}
         />
+
+        {isCompatible && (
+          <div className="rounded-lg border border-accent/20 bg-sidebar/50 p-4">
+            <h3 className="mb-3 text-sm font-semibold">Advanced Settings</h3>
+            <div className="flex flex-col gap-3">
+              <label className="text-sm">Runtime Profile
+                <select className="mt-1 w-full rounded border border-border bg-bg p-2" value={formData.runtimeProfile} onChange={(e) => setFormData({ ...formData, runtimeProfile: e.target.value })}>
+                  <option value="standard">Standard</option>
+                  <option value="lmstudio_local">LM Studio Local</option>
+                </select>
+              </label>
+              <Input label="Base URL / Endpoint" value={formData.baseUrl} onChange={(e) => setFormData({ ...formData, baseUrl: e.target.value })} placeholder="https://api.openai.com/v1" hint="Connection-specific; key and model remain unchanged." />
+              <div className="grid grid-cols-2 gap-3">
+                {[["connectTimeoutMs", "Connect timeout (ms)"], ["requestTimeoutMs", "Request timeout (ms)"], ["streamTimeoutMs", "Stream timeout (ms)"], ["streamIdleTimeoutMs", "Stream idle timeout (ms)"]].map(([field, label]) => (
+                  <Input key={field} label={label} type="number" min="0" value={formData[field]} onChange={(e) => setFormData({ ...formData, [field]: e.target.value })} />
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
 
         {!isOAuth && (
           <>

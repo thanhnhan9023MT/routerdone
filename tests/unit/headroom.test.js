@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { compressWithHeadroom, formatHeadroomLog } from "../../open-sse/rtk/headroom.js";
+import { compressWithHeadroom, formatHeadroomLog, normalizeHeadroomAdaptiveConfig, resolveHeadroomDecision } from "../../open-sse/rtk/headroom.js";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -63,6 +63,24 @@ describe("compressWithHeadroom", () => {
 
     expect(stats).toBeNull();
     expect(global.fetch).not.toHaveBeenCalled();
+  });
+});
+
+describe("adaptive Headroom policy", () => {
+  it("resolves bypass, soft, mandatory, recovery", () => {
+    const config = normalizeHeadroomAdaptiveConfig({ softThresholdPercent: 70, mandatoryThresholdPercent: 85, compactThresholdPercent: 95 });
+    expect(resolveHeadroomDecision({ estimatedTokens: 69, hardCapTokens: 100, config }).mode).toBe("bypass");
+    expect(resolveHeadroomDecision({ estimatedTokens: 70, hardCapTokens: 100, config }).mode).toBe("soft");
+    expect(resolveHeadroomDecision({ estimatedTokens: 85, hardCapTokens: 100, config }).mode).toBe("mandatory");
+    expect(resolveHeadroomDecision({ estimatedTokens: 95, hardCapTokens: 100, config }).mode).toBe("recovery");
+  });
+
+  it("falls back to safe defaults for invalid config", () => {
+    expect(normalizeHeadroomAdaptiveConfig({ softThresholdPercent: 90, mandatoryThresholdPercent: 80 })).toMatchObject({
+      softThresholdPercent: 70,
+      mandatoryThresholdPercent: 85,
+      compactThresholdPercent: 95,
+    });
   });
 });
 

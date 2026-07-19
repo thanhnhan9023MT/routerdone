@@ -1,0 +1,22 @@
+[
+  {
+    "name": "gpt-5.5",
+    "visionModel": null,
+    "models": "[\"euro/accounts/euromodels/models/gpt-5.6-terra\", \"goci/cx/gpt-5.5\", \"euro/accounts/euromodels/models/gpt-5.5\", \"psh/cx/gpt-5.5\"]"
+  },
+  {
+    "name": "gpt-5.6-luna",
+    "visionModel": null,
+    "models": "[\"euro/accounts/euromodels/models/gpt-5.6-luna\", \"goci/cx/gpt-5.6-luna\", \"psh/xai/grok-4.5\"]"
+  },
+  {
+    "name": "gpt-5.6-sol-vip",
+    "visionModel": null,
+    "models": "[\"goci/cx/gpt-5.6-terra\", \"goci/cx/gpt-5.5\", \"vilaog/gpt-5.6-sol\"]"
+  },
+  {
+    "name": "gpt-5.6-terra-vip",
+    "visionModel": null,
+    "models": "[\"goci/cx/gpt-5.6-terra\", \"goci/cx/gpt-5.5\", \"vilaot/gpt-5.6-terra\"]"
+  }
+]

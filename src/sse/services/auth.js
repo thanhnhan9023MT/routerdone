@@ -1,6 +1,6 @@
-﻿import { getProviderConnections, validateApiKey, updateProviderConnection, getSettings } from "@/lib/localDb";
+import { getProviderConnections, validateApiKey, updateProviderConnection, getSettings } from "@/lib/localDb";
 import { resolveConnectionProxyConfig } from "@/lib/network/connectionProxy";
-import { formatRetryAfter, checkFallbackError, isModelLockActive, buildModelLockUpdate, getEarliestModelLockUntil, isBusyConcurrencyError, isPreflightTimeoutError, shouldLockConnectionForError, resolveConnectionCooldownMs, buildModelFailureBackoffUpdate, buildClearModelFailureUpdate, isRateLimitError, isProviderSelfHealError, shouldDisableConnectionForError } from "open-sse/services/accountFallback.js";
+import { formatRetryAfter, checkFallbackError, isClientPayloadError, isModelLockActive, buildModelLockUpdate, getEarliestModelLockUntil, isBusyConcurrencyError, isPreflightTimeoutError, shouldLockConnectionForError, resolveConnectionCooldownMs, buildModelFailureBackoffUpdate, buildClearModelFailureUpdate, isRateLimitError, isProviderSelfHealError, shouldDisableConnectionForError, normalizeStaleConnectionState } from "open-sse/services/accountFallback.js";
 import { MAX_RATE_LIMIT_COOLDOWN_MS } from "open-sse/config/errorConfig.js";
 import { resolveProviderId, FREE_PROVIDERS } from "@/shared/constants/providers.js";
 import * as log from "../utils/logger.js";
@@ -72,7 +72,17 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
       };
     }
 
-    const connections = await getProviderConnections({ provider: providerId, isActive: true });
+    const rawConnections = await getProviderConnections({ provider: providerId, isActive: true });
+    const connections = [];
+    for (const connection of rawConnections) {
+      const stale = normalizeStaleConnectionState(connection);
+      if (stale.needsUpdate) {
+        const healed = await updateProviderConnection(connection.id, stale.update);
+        connections.push(healed || connection);
+      } else {
+        connections.push(connection);
+      }
+    }
     log.debug("AUTH", `${provider} | total connections: ${connections.length}, excludeIds: ${excludeSet.size > 0 ? [...excludeSet].join(",") : "none"}, model: ${model || "any"}`);
 
     if (connections.length === 0) {
@@ -227,6 +237,10 @@ export async function markAccountUnavailable(connectionId, status, errorText, pr
   const backoffLevel = conn?.backoffLevel || 0;
   const now = Date.now();
   const reasonText = typeof errorText === "string" ? errorText : (errorText ? JSON.stringify(errorText) : "Provider error");
+  if (isClientPayloadError(status, reasonText)) {
+    log.warn('AUTH', 'payload rejected; connection remains active', { status, model });
+    return { shouldFallback: true, cooldownMs: 0, clientError: true };
+  }
   const busyOrConcurrency = isBusyConcurrencyError(reasonText);
   const preflightTimeout = isPreflightTimeoutError(status, reasonText);
   const lastFailureAtMs = conn?.comboPreflightFailureAt ? new Date(conn.comboPreflightFailureAt).getTime() : 0;

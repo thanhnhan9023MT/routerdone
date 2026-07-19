@@ -159,6 +159,7 @@ export default function ProviderLimits() {
   const countdownRef = useRef(null);
   const tickCountRef = useRef(0);
   const resetRefreshTimerRef = useRef(null);
+  const autoManageAbortControllerRef = useRef(null);
 
   const fetchConnections = useCallback(
     async (targetPage = page) => {
@@ -806,8 +807,8 @@ export default function ProviderLimits() {
   );
 
   const bulkToggleMixed = useCallback(
-    async (toggles) => {
-      if (!toggles.length || bulkToggling) return;
+    async (toggles, { signal } = {}) => {
+      if (!toggles.length || bulkToggling || signal?.aborted) return;
       setBulkToggling(true);
       try {
         await Promise.all(
@@ -816,9 +817,11 @@ export default function ProviderLimits() {
               method: "PUT",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ isActive }),
+              signal,
             }),
           ),
         );
+        if (signal?.aborted) return;
         setConnections((prev) =>
           prev.map((c) => {
             const toggle = toggles.find((t) => t.id === c.id);
@@ -826,12 +829,25 @@ export default function ProviderLimits() {
           }),
         );
       } catch (error) {
+        if (error?.name === "AbortError") return;
         console.error("Error bulk toggling connections:", error);
       } finally {
         setBulkToggling(false);
       }
     },
     [bulkToggling],
+  );
+
+  const handleAutoManageToggle = useCallback(() => {
+    const next = !autoManage;
+    window.localStorage.setItem(AUTO_MANAGE_STORAGE_KEY, String(next));
+    if (!next) autoManageAbortControllerRef.current?.abort();
+    setAutoManage(next);
+  }, [autoManage]);
+
+  useEffect(
+    () => () => autoManageAbortControllerRef.current?.abort(),
+    [],
   );
 
   const handleSetDefaultProvider = useCallback(() => {
@@ -903,6 +919,8 @@ export default function ProviderLimits() {
   // sortedConnections, to avoid re-running after our own active-state toggles.
   useEffect(() => {
     if (!autoManage || bulkToggling) return;
+    const abortController = new AbortController();
+    autoManageAbortControllerRef.current = abortController;
 
     const conns = connectionsRef.current.filter(
       (conn) => conn.authType === "oauth" && isUsageEligible(conn),
@@ -924,7 +942,7 @@ export default function ProviderLimits() {
       if (disabled > 0) notices.push(`Auto-disabled ${disabled} account(s) (depleted, payment, or quota API error)`);
       if (enabled > 0) notices.push(`Auto-enabled ${enabled} account(s) with available quota`);
       setAutoManageNotice(notices.join(" - "));
-      bulkToggleMixed(toggles);
+      bulkToggleMixed(toggles, { signal: abortController.signal });
     }
   }, [autoManage, quotaData, bulkToggling]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -1239,7 +1257,7 @@ export default function ProviderLimits() {
 
           {/* Auto-manage toggle */}
           <button
-            onClick={() => setAutoManage((prev) => !prev)}
+            onClick={handleAutoManageToggle}
             className={`flex h-8 shrink-0 items-center gap-1 rounded-lg border px-2 text-xs transition-colors ${autoManage ? "border-primary/30 bg-primary/5 text-primary" : "border-black/10 text-text-primary hover:bg-black/5 dark:border-white/10 dark:hover:bg-white/5"}`}
             title={autoManage ? "Auto quota management is ON — depleted accounts auto-disabled, available accounts auto-enabled" : "Enable auto quota management"}
           >

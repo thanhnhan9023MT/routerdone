@@ -9,6 +9,7 @@ import {
 import { cacheClaudeHeaders } from "open-sse/utils/claudeHeaderCache.js";
 import { getSettings, getApiKeyByRawKey } from "@/lib/localDb";
 import { getModelInfo, getComboModels } from "../services/model.js";
+import { classifyModelRoute, isAutoRouteFailure } from "open-sse/services/modelRouting.js";
 import { checkModelAllowed, checkKeyQuota } from "../services/keyPolicy.js";
 import { handleChatCore } from "open-sse/handlers/chatCore.js";
 import { DEFAULT_HEADROOM_URL } from "@/lib/headroom/detect";
@@ -17,6 +18,65 @@ import { handleComboChat, handleFusionChat } from "open-sse/services/combo.js";
 import { handleBypassRequest } from "open-sse/utils/bypassHandler.js";
 import { HTTP_STATUS } from "open-sse/config/runtimeConfig.js";
 import { resolveRoutePolicy } from "open-sse/services/routePolicy.js";
+import { detectContextBackupFormat, isContextBackupEligible, normalizeContextBackupConfig } from "../services/contextSummaryBackup.js";
+
+function estimateBackupTokens(body, format) {
+  const source = format === "responses" ? body?.input : body?.messages;
+  return Math.ceil(JSON.stringify(source || []).length / 4);
+}
+
+async function applyContextSummaryBackup(body, settings, request) {
+  let config;
+  try { config = normalizeContextBackupConfig(settings?.routerDoneContextBackup); } catch { return body; }
+  if (!config.enabled || request.headers.get("x-routerdone-context-compact") === "1") return body;
+  const pathname = new URL(request.url).pathname;
+  const format = detectContextBackupFormat(body, pathname);
+  if (!format || !isContextBackupEligible(body, { format })) return body;
+  const estimatedTokens = estimateBackupTokens(body, format);
+  if (estimatedTokens < config.thresholdTokens) return body;
+
+  const key = format === "responses" ? "input" : "messages";
+  const keep = Math.max(1, config.retainRecentTurns) * 2;
+  const items = body[key];
+  const older = items.slice(0, -keep);
+  const recent = items.slice(-keep);
+  const lines = older.map((item) => `${item.role}: ${JSON.stringify(item.content)}`).join("\n");
+  let summaryText = "";
+  const compactModels = [config.compressModel, config.compressFallbackModel].filter((model, index, list) => model && list.indexOf(model) === index);
+  for (const compactModel of compactModels) {
+    if (summaryText) break;
+    try {
+      const compactRequest = new Request(new URL("/v1/chat/completions", request.url), {
+        method: "POST",
+        headers: new Headers({ "content-type": "application/json", "authorization": request.headers.get("authorization") || "", "x-routerdone-context-compact": "1" }),
+        body: JSON.stringify({ model: compactModel, stream: false, messages: [
+          { role: "system", content: "Summarize the older conversation faithfully. Preserve decisions, requirements, identifiers, errors, and unfinished work. Output only the compact summary." },
+          { role: "user", content: lines },
+        ] }),
+      });
+      const compactResponse = await handleChat(compactRequest);
+      const compactJson = await compactResponse.json();
+      summaryText = compactJson?.choices?.[0]?.message?.content || compactJson?.output_text || "";
+      if (summaryText) log.info("CONTEXT-BACKUP", `model=${compactModel} applied`);
+    } catch (error) {
+      log.warn("CONTEXT-BACKUP", `model ${compactModel} failed; trying fallback: ${error.message}`);
+    }
+  }  if (!summaryText) summaryText = `[RouterDone Context Summary Backup]\n${older.map((item) => `${item.role}: ${textOnlyForBackup(item.content)}`).join("\n")}`;
+  const summaryItem = format === "responses"
+    ? { type: "message", role: "system", content: [{ type: "input_text", text: summaryText }] }
+    : { role: "system", content: summaryText };
+  log.info("CONTEXT-BACKUP", `applied format=${format} estimatedTokens=${estimatedTokens} model=${config.compressModel || config.compressFallbackModel || "local"}`);
+  return { ...body, [key]: [summaryItem, ...recent] };
+}
+
+function textOnlyForBackup(value) {
+  if (typeof value === "string") return value.replace(/\s+/g, " ").trim();
+  if (Array.isArray(value)) return value.map((part) => part?.text || "").join(" ").replace(/\s+/g, " ").trim();
+  return "";
+}
+function maybeBackupBody(body, settings, request) {
+  return applyContextSummaryBackup(body, settings, request);
+}
 
 const MODEL_REDIRECTS = new Map([
   ["gpt-5.4-mini", "helper.fallback"],
@@ -156,6 +216,7 @@ export async function handleChat(request, clientRawRequest = null) {
 
   // Check if model is a combo (has multiple models with fallback)
   const comboModels = await getComboModels(modelStr);
+  body = await maybeBackupBody(body, settings, request);
   if (comboModels) {
     // Check for combo-specific strategy first, fallback to global
     const comboStrategies = settings.comboStrategies || {};
@@ -221,7 +282,16 @@ export async function handleChat(request, clientRawRequest = null) {
  * Handle single model chat request
  */
 async function handleSingleModelChat(body, modelStr, clientRawRequest = null, request = null, apiKey = null, attemptContext = {}) {
-  const modelInfo = await getModelInfo(modelStr);
+  // Auto routing is opt-in; explicit model/combo requests bypass classification unchanged.
+  const route = classifyModelRoute(modelStr, {
+    auto: attemptContext.autoRoute === true,
+    body,
+    localModel: attemptContext.localModel,
+    strongModel: attemptContext.strongModel,
+    explicitModel: modelStr !== "auto" ? modelStr : "",
+  });
+  const selectedModel = route.model || modelStr;
+  const modelInfo = await getModelInfo(selectedModel);
 
   // If provider is null, this might be a combo name - check and handle
   if (!modelInfo.provider) {
@@ -371,7 +441,9 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       rtkEnabled: !!chatSettings.rtkEnabled,
       headroomEnabled: !!chatSettings.headroomEnabled,
       headroomUrl: chatSettings.headroomUrl || DEFAULT_HEADROOM_URL,
+      headroomCompressModel: chatSettings.headroomCompressModel || "",
       headroomCompressUserMessages: !!chatSettings.headroomCompressUserMessages,
+      headroomAdaptive: chatSettings.headroomAdaptive,
       cavemanEnabled: !!chatSettings.cavemanEnabled,
       cavemanLevel: chatSettings.cavemanLevel || "full",
       ponytailEnabled: !!chatSettings.ponytailEnabled,
@@ -380,6 +452,8 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       contextGuardMaxBytes: chatSettings.contextGuardMaxBytes,
       contextGuardKeepRecent: chatSettings.contextGuardKeepRecent,
       contextGuardHardCapTokens: chatSettings.contextGuardHardCapTokens,
+      responsesCompactionEnabled: chatSettings.responsesCompactionEnabled === true,
+      responsesCompactionThresholdTokens: chatSettings.responsesCompactionThresholdTokens,
       providerThinking,
       routeInfo,
       streamTimeoutPolicy: resolveRoutePolicy(routeMode, { stream: attemptContext.streamTimeoutPolicy, streamPreflightTimeoutMs: attemptContext.streamPreflightTimeoutMs }).stream,
@@ -398,6 +472,19 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
     });
 
     if (result.success) return result.response;
+
+    // Local auto-route failure → one-way strong fallback; never downgrade strong → local.
+    if (route.mode === "local" && route.fallbackModel && isAutoRouteFailure(result.status)) {
+      log.warn("ROUTING", `Local route failed (${result.status}), falling back to ${route.fallbackModel}`);
+      return handleSingleModelChat(
+        { ...body, model: route.fallbackModel },
+        route.fallbackModel,
+        clientRawRequest,
+        request,
+        apiKey,
+        { ...attemptContext, autoRoute: false, localModel: null, strongModel: null }
+      );
+    }
 
     // Mark account unavailable (auto-calculates cooldown with exponential backoff, or precise resetsAtMs)
     const { shouldFallback } = await markAccountUnavailable(credentials.connectionId, result.status, result.error, provider, model, result.resetsAtMs);

@@ -1,0 +1,10 @@
+{
+  "name": "kimi-k2.7-vision",
+  "models": [
+    "euro/accounts/euromodels/models/gpt-5.6-terra",
+    "ollama/kimi-k2.7-code",
+    "euro/accounts/euromodels/models/kimi-k2.7-code",
+    "ocg/kimi-k2.7-code",
+    "nhan/kimi-2.7"
+  ]
+}

@@ -64,9 +64,20 @@ function estimateStringTokens(value) {
   return Math.ceil((ascii / FALLBACK_ASCII_CHARS_PER_TOKEN) + (nonAscii / FALLBACK_NON_ASCII_CHARS_PER_TOKEN));
 }
 
+// Inline image data URIs carry a base64 payload that would balloon the token
+// estimate if counted as text (a ~5MB image decodes to ~6.7M base64 chars).
+// Replace each with a short fixed placeholder so a multimodal request estimates
+// in the low thousands instead of the millions — preventing a false
+// context_too_large rejection before the model ever sees the image.
+const DATA_URI_RE = /^data:[^;]+;base64,/;
+const IMAGE_PLACEHOLDER = "__inline_image__";
+
 function collectScalarText(value, parts, seen) {
   if (typeof value === "string") {
-    parts.push(value);
+    // Count inline image data URIs as a fixed visual-token budget instead of
+    // tokenizing their base64 payload as text (which exploded estimates to the
+    // millions and tripped the hard context cap before the model saw the image).
+    parts.push(DATA_URI_RE.test(value) ? IMAGE_PLACEHOLDER : value);
     return;
   }
   if (typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") {

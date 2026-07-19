@@ -49,6 +49,29 @@ describe("adaptive combo fallback", () => {
     expect(tried).toEqual(["p/a", "p/a", "p/b"]);
   });
 
+  it("does not retry a transient response that says all accounts are model-locked", async () => {
+    const tried = [];
+    const res = await handleComboChat({
+      body: { model: "combo", messages: [] },
+      models: ["p/a", "p/b"],
+      comboName: "combo",
+      comboRetryAttempts: 9,
+      comboRetryDelayMs: 0,
+      log,
+      handleSingleModel: async (_body, model) => {
+        tried.push(model);
+        if (model === "p/a") {
+          return new Response(JSON.stringify({
+            error: { code: "all_accounts_locked", comboCooldownReason: "auth_model_locked" },
+          }), { status: 503 });
+        }
+        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      },
+    });
+
+    expect(res.ok).toBe(true);
+    expect(tried).toEqual(["p/a", "p/b"]);
+  });
   it("round-robin only chooses start; failed starter still falls through remaining models", async () => {
     expect(getRotatedModels(["p/a", "p/b", "p/c"], "rr", "round-robin")[0]).toBe("p/a");
     const tried = [];

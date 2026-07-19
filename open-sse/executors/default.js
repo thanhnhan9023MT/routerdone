@@ -1,4 +1,5 @@
 import { BaseExecutor } from "./base.js";
+import { normalizeConnectionBaseUrl } from "../services/provider.js";
 import { PROVIDERS, PROVIDER_OAUTH } from "../config/providers.js";
 import { ANTHROPIC_API_VERSION, OPENAI_COMPAT_BASE, ANTHROPIC_COMPAT_BASE } from "../providers/shared.js";
 import { OAUTH_ENDPOINTS, buildKimiHeaders } from "../config/appConstants.js";
@@ -123,7 +124,7 @@ export class DefaultExecutor extends BaseExecutor {
     }
     if (this.provider?.startsWith?.("openai-compatible-")) {
       const baseUrl = credentials?.providerSpecificData?.baseUrl || OPENAI_COMPAT_BASE;
-      const normalized = baseUrl.replace(/\/$/, "");
+      const normalized = normalizeConnectionBaseUrl(baseUrl, credentials);
       const apiType = credentials?.providerSpecificData?.apiType;
       const path = apiType === "responses" || (!apiType && this.provider.includes("responses")) ? "/responses" : "/chat/completions";
       return `${normalized}${path}`;

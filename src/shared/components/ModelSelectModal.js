@@ -30,9 +30,11 @@ export default function ModelSelectModal({
   activeProviders = [],
   title = "Select Model",
   modelAliases = {},
+  availableModels = [],
   kindFilter = null,
   addedModelValues = [],
   closeOnSelect = true,
+  showAllProviders = false,
 }) {
   // Filter activeProviders by serviceKinds when kindFilter set (e.g. "webSearch", "webFetch")
   const filteredActiveProviders = useMemo(() => {
@@ -206,8 +208,13 @@ export default function ModelSelectModal({
 
     // Only show connected providers (including both standard and custom)
     const providerIdsToShow = new Set([
-      ...activeConnectionIds,  // Only connected providers
-      ...noAuthIds,            // No-auth providers (kind-filtered)
+      ...activeConnectionIds,
+      ...noAuthIds,
+      ...(showAllProviders ? Object.keys(allProviders) : []),
+      ...(showAllProviders ? Object.values(modelAliases).filter((value) => typeof value === 'string').map((value) => value.split('/')[0]) : []),
+      ...(showAllProviders ? customModels.map((model) => model.providerAlias).filter(Boolean) : []),
+      ...(showAllProviders ? Object.keys(liveModelsByProvider).filter((key) => allProviders[key]) : []),
+      ...(showAllProviders ? availableModels.map((model) => model.provider).filter(Boolean) : [])
     ]);
 
     // Sort by PROVIDER_ORDER
@@ -220,6 +227,8 @@ export default function ModelSelectModal({
     sortedProviderIds.forEach((providerId) => {
       const alias = getProviderAlias(providerId);
       const providerInfo = allProviders[providerId] || { name: providerId, color: "#666" };
+      const providerConnections = activeProviders.filter((connection) => connection.provider === providerId || connection.id === providerId || connection.connectionId === providerId);
+      const providerUnavailable = showAllProviders && providerConnections.length > 0 && providerConnections.every((connection) => connection.isActive === false || connection.testStatus === "unavailable" || connection.testStatus === "error");
       const isCustomProvider = isOpenAICompatibleProvider(providerId) || isAnthropicCompatibleProvider(providerId);
 
       // For provider-as-model kinds (webSearch/webFetch): emit a single entry where value === providerId
@@ -228,7 +237,8 @@ export default function ModelSelectModal({
           name: providerInfo.name,
           alias,
           color: providerInfo.color,
-          models: [{ id: providerId, name: providerInfo.name, value: providerId }],
+          unavailable: providerUnavailable,
+          models: [{ id: providerId, name: providerInfo.name, value: providerId, unavailable: providerUnavailable }],
         };
         return;
       }
@@ -287,7 +297,8 @@ export default function ModelSelectModal({
             name: displayName,
             alias: alias,
             color: providerInfo.color,
-            models: combined,
+            unavailable: providerUnavailable,
+            models: combined.map((model) => ({ ...model, unavailable: providerUnavailable })),
           };
         }
       } else if (isCustomProvider) {
@@ -309,7 +320,33 @@ export default function ModelSelectModal({
             value: `${nodePrefix}/${fullModel.replace(`${providerId}/`, "")}`,
           }));
 
-        const liveNodeModels = mergeLiveModels(providerId, nodePrefix, nodeModels, connection?.id || connection?.connectionId, { forceAliasPrefix: true });
+        const registryModels = availableModels
+          .filter((model) => model.provider === providerId || model.provider === nodePrefix)
+          .map((model) => ({
+            id: model.model || model.id,
+            name: model.alias || model.model || model.id,
+            value: model.fullModel || `${nodePrefix}/${model.model || model.id}`,
+            kind: getModelKind(model),
+            isLive: true,
+          }));
+
+        const registeredCustomModels = customModels
+          .filter((model) => model.providerAlias === providerId || model.providerAlias === nodePrefix)
+          .map((model) => ({
+            id: model.id,
+            name: model.name || model.id,
+            value: `${nodePrefix}/${model.id}`,
+            kind: getModelKind(model),
+            isCustom: true,
+          }));
+
+        const liveNodeModels = mergeLiveModels(
+          providerId,
+          nodePrefix,
+          [...nodeModels, ...registryModels, ...registeredCustomModels],
+          connection?.id || connection?.connectionId,
+          { forceAliasPrefix: true }
+        );
 
         // Always show compatible providers that are connected, even with no aliases.
         // Prefer live /models output; fall back to placeholder when the provider cannot list models.
@@ -324,7 +361,8 @@ export default function ModelSelectModal({
           name: displayName,
           alias: nodePrefix,
           color: providerInfo.color,
-          models: modelsToShow,
+          unavailable: providerUnavailable,
+          models: modelsToShow.map((model) => ({ ...model, unavailable: providerUnavailable })),
           isCustom: true,
           hasModels: nodeModels.length > 0,
         };
@@ -398,7 +436,7 @@ export default function ModelSelectModal({
     });
 
     return groups;
-  }, [filteredActiveProviders, modelAliases, allProviders, providerNodes, customModels, disabledModels, kindFilter, activeProviders, mergeLiveModels]);
+  }, [filteredActiveProviders, modelAliases, availableModels, allProviders, providerNodes, customModels, disabledModels, kindFilter, activeProviders, mergeLiveModels, showAllProviders, liveModelsByProvider]);
 
   // Filter combos by search query (and hide combos when kindFilter is set — combos are LLM-only by design)
   const filteredCombos = useMemo(() => {
@@ -540,9 +578,10 @@ export default function ModelSelectModal({
                 fallbackText={(group.name || providerId).slice(0, 2).toUpperCase()}
                 fallbackColor={group.color}
               />
-              <span className="text-xs font-medium text-primary">
+              <span className={`text-xs font-medium ${group.unavailable ? "text-warning" : "text-primary"}`}>
                 {group.name}
               </span>
+              {group.unavailable && <span className="text-[9px] text-warning border border-warning/40 rounded px-1">unavailable</span>}
               <span className="text-[10px] text-text-muted">
                 ({group.models.length})
               </span>
@@ -577,16 +616,19 @@ export default function ModelSelectModal({
                         <>
                           <span className="material-symbols-outlined text-[11px]">edit</span>
                           {model.name}
+                          {model.unavailable && <span className="text-[9px] text-warning font-normal">unavailable</span>}
                         </>
                       ) : model.isCustom ? (
                         <>
                           {model.name}
+                          {model.unavailable && <span className="text-[9px] text-warning font-normal">unavailable</span>}
                           <span className="text-[9px] opacity-60 font-normal">custom</span>
                           <CapacityBadges caps={getCaps(model.value)} />
                         </>
                       ) : (
                         <>
                           {model.name}
+                          {model.unavailable && <span className="text-[9px] text-warning font-normal">unavailable</span>}
                           <CapacityBadges caps={getCaps(model.value)} />
                         </>
                       )}
@@ -624,7 +666,10 @@ ModelSelectModal.propTypes = {
   ),
   title: PropTypes.string,
   modelAliases: PropTypes.object,
+  availableModels: PropTypes.array,
   kindFilter: PropTypes.string,
   addedModelValues: PropTypes.arrayOf(PropTypes.string),
   closeOnSelect: PropTypes.bool,
+  showAllProviders: PropTypes.bool,
+
 };

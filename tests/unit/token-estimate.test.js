@@ -115,4 +115,23 @@ describe("tokenEstimate", () => {
     expect(result.count).toBe(o200k.encode("hello\n42\nfalse").length);
     expect(result.mode).toBe("exact");
   });
+
+  it("does not count inline image base64 as text tokens", () => {
+    // A ~1MB base64 payload would previously estimate to ~262k text tokens and
+    // trip the hard context cap before the model saw the image. Inline image
+    // data URIs must collapse to a small fixed placeholder.
+    const hugeBase64 = "A".repeat(1024 * 1024);
+    const body = {
+      model: "gpt-5",
+      messages: [
+        { role: "user", content: [
+          { type: "text", text: "describe this" },
+          { type: "image_url", image_url: { url: `data:image/png;base64,${hugeBase64}` } },
+        ] },
+      ],
+    };
+    const result = estimateRequestTokens(body, "gpt-5");
+    expect(result).toBeLessThan(200);
+    expect(result).toBeGreaterThan(0);
+  });
 });

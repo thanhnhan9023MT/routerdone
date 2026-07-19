@@ -19,6 +19,13 @@ function isAnthropicCompatible(provider) {
   return typeof provider === "string" && provider.startsWith(ANTHROPIC_COMPATIBLE_PREFIX);
 }
 
+export function normalizeConnectionBaseUrl(baseUrl, credentials = null) {
+  const raw = String(baseUrl || "").trim().replace(/\/+$/, "");
+  if (credentials?.providerSpecificData?.runtimeProfile !== "lmstudio_local") return raw;
+  const endpoint = raw.replace(/\/(chat\/completions|responses|models|messages|embeddings)$/i, "");
+  return /\/v1$/i.test(endpoint) ? endpoint : `${endpoint}/v1`;
+}
+
 function getOpenAICompatibleType(provider, credentials = null) {
   if (!isOpenAICompatible(provider)) return "chat";
   const apiType = credentials?.providerSpecificData?.apiType;

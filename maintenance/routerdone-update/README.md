@@ -41,12 +41,19 @@ RouterDone la public fork cua upstream upstream (MIT, decolua).
 1. Chay verify checklist.
 2. Commit thay doi len branch local.
 3. Push len GitHub repo public.
-4. Tao GitHub Release +1 patch:
+4. Tao va push annotated tag `vX.Y.Z`, roi kiem tra GitHub Release:
 
 ```bash
-gh release list --repo thoa100m/routerdone --limit 1
-gh release create v0.5.9 --repo thoa100m/routerdone --target main --title "RouterDone v0.5.9" --notes "Upstream upstream sync + RouterDone rebrand + verify green"
-gh release view v0.5.9 --repo thoa100m/routerdone
+git tag -a vX.Y.Z -m "RouterDone vX.Y.Z"
+git push origin vX.Y.Z
+gh release view vX.Y.Z --repo thoa100m/routerdone
+```
+
+Neu external automation chua tao release, tao release tu annotated tag da co:
+
+```bash
+gh release create vX.Y.Z --repo thoa100m/routerdone --verify-tag \
+  --title "RouterDone vX.Y.Z" --notes "RouterDone vX.Y.Z"
 ```
 
 Neu version moi khac `0.5.8`, bump PATCH len `+1` tu tag hien tai.
@@ -54,10 +61,10 @@ Neu version moi khac `0.5.8`, bump PATCH len `+1` tu tag hien tai.
 
 - Khong copy `.agents/`, `rules/`, `AGENTS.md`, `cloud/`, `skills/`,
   `tester/`, `task-bootstrap-cache-design.txt`, `gitbook/`, `images/`,
-  `cli/` tu llmGateway private vao routerdone public.
+  `cli/` tu private source vao routerdone public.
 - Khong giu git history cu.
-- Khong hardcode combo ca nhan (vd `gpt-5.5.fallback`). Dung ten trung
-  tinh `helper.fallback`, `coding.fallback`, `vision.fallback`.
+- Khong hardcode combo ca nhan. Dung ten trung tinh `helper.fallback`,
+  `coding.fallback`, `vision.fallback`.
 - Khong hardcode domain/IP/tunnel ca nhan.
 - Khong de secret mac dinh trong code (.env.example = placeholder).
 - Khong rebrand `upstream`/`upstream-router` trong context lines cua patch

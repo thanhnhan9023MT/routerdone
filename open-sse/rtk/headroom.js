@@ -3,6 +3,46 @@ import { openaiToClaudeRequest } from "../translator/request/openai-to-claude.js
 import { openaiResponsesToOpenAIRequest, openaiToOpenAIResponsesRequest } from "../translator/request/openai-responses.js";
 
 const DEFAULT_TIMEOUT_MS = 3000;
+export const DEFAULT_HEADROOM_ADAPTIVE = Object.freeze({
+  enabled: true,
+  softThresholdPercent: 70,
+  mandatoryThresholdPercent: 85,
+  compactThresholdPercent: 95,
+  softTimeoutMs: 1500,
+  mandatoryTimeoutMs: 3000,
+});
+
+export function normalizeHeadroomAdaptiveConfig(config = {}) {
+  const next = { ...DEFAULT_HEADROOM_ADAPTIVE, ...(config || {}) };
+  const thresholds = [next.softThresholdPercent, next.mandatoryThresholdPercent, next.compactThresholdPercent].map(Number);
+  const timeouts = [next.softTimeoutMs, next.mandatoryTimeoutMs].map(Number);
+  if (typeof next.enabled !== "boolean"
+    || thresholds.some((value) => !Number.isSafeInteger(value) || value < 50 || value > 99)
+    || !(thresholds[0] < thresholds[1] && thresholds[1] < thresholds[2])
+    || timeouts.some((value) => !Number.isSafeInteger(value) || value < 500 || value > 5000)) {
+    return { ...DEFAULT_HEADROOM_ADAPTIVE };
+  }
+  return {
+    enabled: next.enabled,
+    softThresholdPercent: thresholds[0],
+    mandatoryThresholdPercent: thresholds[1],
+    compactThresholdPercent: thresholds[2],
+    softTimeoutMs: timeouts[0],
+    mandatoryTimeoutMs: timeouts[1],
+  };
+}
+
+export function resolveHeadroomDecision({ estimatedTokens = 0, hardCapTokens = 0, config = {}, isCompact = false } = {}) {
+  const adaptive = normalizeHeadroomAdaptiveConfig(config);
+  if (!adaptive.enabled || isCompact || estimatedTokens <= 0 || hardCapTokens <= 0) {
+    return { mode: "bypass", timeoutMs: 0, ratioPercent: 0, reason: "disabled-or-not-applicable" };
+  }
+  const ratioPercent = (estimatedTokens / hardCapTokens) * 100;
+  if (ratioPercent < adaptive.softThresholdPercent) return { mode: "bypass", timeoutMs: 0, ratioPercent, reason: "below-soft-threshold" };
+  if (ratioPercent < adaptive.mandatoryThresholdPercent) return { mode: "soft", timeoutMs: adaptive.softTimeoutMs, ratioPercent, reason: "soft-threshold" };
+  if (ratioPercent < adaptive.compactThresholdPercent) return { mode: "mandatory", timeoutMs: adaptive.mandatoryTimeoutMs, ratioPercent, reason: "mandatory-threshold" };
+  return { mode: "recovery", timeoutMs: adaptive.mandatoryTimeoutMs, ratioPercent, reason: "recovery-threshold" };
+}
 
 function maskEndpoint(value) {
   try {

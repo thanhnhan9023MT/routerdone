@@ -1,6 +1,5 @@
-// Strip multimodal content blocks a model cannot read, BEFORE translation.
-// Driven by getCapabilitiesForModel: vision/audioInput/pdf. Replaces removed
-// media with a short text placeholder so messages never become empty.
+// Strip unsupported audio/file blocks BEFORE translation. Image blocks pass
+// through unchanged so the destination provider remains the source of truth.
 import { FORMATS } from "../formats.js";
 
 // Placeholder text inserted where a media block was removed.
@@ -17,13 +16,10 @@ const PLACEHOLDER_PREV = {
   pdf: "[Previous file omitted from context.]",
 };
 const ph = (cap, isLast) => (isLast ? PLACEHOLDER_CURRENT : PLACEHOLDER_PREV)[cap];
-const invalidImagePh = (isLast) =>
-  isLast ? "[image omitted: invalid image data]" : "[Previous image omitted from context: invalid image data.]";
-
 // Map gemini inlineData/fileData mime prefix -> capability it requires.
 function capForMime(mime) {
   if (typeof mime !== "string") return null;
-  if (mime.startsWith("image/")) return "vision";
+  if (mime.startsWith("image/")) return null;
   if (mime.startsWith("audio/")) return "audioInput";
   if (mime === "application/pdf") return "pdf";
   return null;
@@ -32,45 +28,16 @@ function capForMime(mime) {
 // OpenAI chat content block -> required capability (null = plain text/other, keep).
 function capForOpenAIBlock(block) {
   const t = block?.type;
-  if (t === "image_url" || t === "image") return "vision";
+  if (t === "image_url" || t === "image") return null;
   if (t === "input_audio" || t === "audio_url") return "audioInput";
   if (t === "file") return "pdf";
   return null;
 }
 
-function isImageDataUrl(value) {
-  if (typeof value !== "string") return false;
-  const match = value.match(/^data:image\/[a-z0-9.+-]+;base64,([A-Za-z0-9+/]*={0,2})$/i);
-  if (!match || match[1].length === 0 || match[1].length % 4 === 1) return false;
-  try {
-    return Buffer.from(match[1], "base64").length > 0;
-  } catch {
-    return false;
-  }
-}
-
-function isImageUrl(value) {
-  return isImageDataUrl(value) || /^https?:\/\/\S+$/i.test(value);
-}
-
-function hasInvalidResponsesOutputImageUrl(body) {
-  return Array.isArray(body?.input) && body.input.some((item) =>
-    Array.isArray(item?.output) && item.output.some((b) =>
-      Object.hasOwn(b || {}, "image_url") && !isImageUrl(b.image_url)
-    )
-  );
-}
-
-function isResponsesFormat(sourceFormat) {
-  return sourceFormat === FORMATS.OPENAI_RESPONSES ||
-    sourceFormat === FORMATS.OPENAI_RESPONSE ||
-    sourceFormat === FORMATS.CODEX;
-}
-
 // Claude content block -> required capability.
 function capForClaudeBlock(block) {
   const t = block?.type;
-  if (t === "image") return "vision";
+  if (t === "image") return null;
   if (t === "document") return "pdf";
   return null;
 }
@@ -95,7 +62,12 @@ function stripOpenAI(body, caps) {
   body.messages.forEach((msg, i) => {
     if (!Array.isArray(msg.content)) return;
     const removed = new Set();
-    msg.content = filterBlocks(msg.content, capForOpenAIBlock, caps, removed, i === last);
+    msg.content = msg.content.filter((block) => {
+      const cap = capForOpenAIBlock(block);
+      if (cap && caps[cap] === false) { removed.add(cap); return false; }
+      return true;
+    });
+    for (const cap of removed) msg.content.push({ type: "text", text: ph(cap, i === last) });
   });
 }
 
@@ -118,7 +90,7 @@ function stripResponses(body, caps) {
     if (Array.isArray(item.content)) {
       const removed = new Set();
       item.content = item.content.filter((b) => {
-        const cap = b?.type === "input_image" ? "vision" : b?.type === "input_file" ? "pdf" : null;
+        const cap = b?.type === "input_file" ? "pdf" : null;
         if (cap && caps[cap] === false) { removed.add(cap); return false; }
         return true;
       });
@@ -127,16 +99,11 @@ function stripResponses(body, caps) {
 
     if (Array.isArray(item.output)) {
       const removed = new Set();
-      let removedInvalidImage = false;
       item.output = item.output.filter((b) => {
         const isImage = b?.type === "input_image" || Object.hasOwn(b || {}, "image_url");
-        if (!isImage) return true;
-        if (caps.vision === false) { removed.add("vision"); return false; }
-        if (!isImageUrl(b.image_url)) { removedInvalidImage = true; return false; }
         return true;
       });
       for (const cap of removed) item.output.push({ type: "output_text", text: ph(cap, i === last) });
-      if (removedInvalidImage) item.output.push({ type: "output_text", text: invalidImagePh(i === last) });
     }
   });
 }
@@ -159,7 +126,7 @@ function stripGeminiParts(contents, caps) {
 }
 
 /**
- * Remove media blocks the model can't read, in-place on the source-format body.
+ * Remove unsupported audio/file blocks in-place; image blocks always pass through.
  * @param {object} body - request body (source format)
  * @param {string} sourceFormat - one of FORMATS
  * @param {object} caps - capabilities from getCapabilitiesForModel
@@ -169,10 +136,8 @@ export function stripUnsupportedModalities(body, sourceFormat, caps) {
   if (!body || !caps) return false;
   // Fast exit: model supports everything we'd strip.
   if (
-    caps.vision !== false &&
     caps.audioInput !== false &&
-    caps.pdf !== false &&
-    !(isResponsesFormat(sourceFormat) && hasInvalidResponsesOutputImageUrl(body))
+    caps.pdf !== false
   ) return false;
 
   switch (sourceFormat) {

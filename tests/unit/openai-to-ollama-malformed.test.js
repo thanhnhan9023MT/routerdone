@@ -27,4 +27,12 @@ describe("openaiToOllamaRequest - tool_calls arguments parsing", () => {
     const out = openaiToOllamaRequest("m", reqWith('{"a":1}'), true);
     expect(out.messages[0].tool_calls[0].function.arguments).toEqual({ a: 1 });
   });
+
+  it("keeps image-only user messages", () => {
+    const image = "data:image/png;base64,QUJD";
+    const out = openaiToOllamaRequest("m", {
+      messages: [{ role: "user", content: [{ type: "image_url", image_url: { url: image } }] }],
+    }, true);
+    expect(out.messages).toEqual([{ role: "user", content: "", images: ["QUJD"] }]);
+  });
 });

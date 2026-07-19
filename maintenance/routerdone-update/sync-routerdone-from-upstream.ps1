@@ -132,6 +132,9 @@ $rebrandFiles = Get-ChildItem $TempDir -Recurse -File -Include "*.js","*.json","
   Where-Object { $_.FullName -notmatch "node_modules|\.next" }
 foreach ($f in $rebrandFiles) {
   $t = Get-Content -LiteralPath $f.FullName -Raw
+  $canonicalRepo = "__ROUTERDONE_CANONICAL_REPO__"
+  $canonicalRepoPattern = 'thoa100m/routerdone(?=$|[/?#\s"''<>):,]|\.(?=git(?:$|[/?#\s"''<>):,])))'
+  $t = $t -replace $canonicalRepoPattern, $canonicalRepo
   $t = $t.Replace("https://llm.biz100m.com", "http://localhost:20128")
   $t = $t.Replace("llm.biz100m.com", "localhost:20128")
   $t = $t.Replace("Biz100M LLM Gateway", "RouterDone")
@@ -145,6 +148,7 @@ foreach ($f in $rebrandFiles) {
   $t = $t.Replace(("9" + "router"), "routerdone")
   $t = $t.Replace("gpt-5.5.fallback", "helper.fallback")
   $t = $t.Replace(("9" + "ROUTER"), "ROUTERDONE")
+  $t = $t.Replace($canonicalRepo, "thoa100m/routerdone")
   Set-Content -LiteralPath $f.FullName -Value $t -NoNewline -Encoding UTF8
 }
 

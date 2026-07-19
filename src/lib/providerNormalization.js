@@ -1,4 +1,5 @@
 import { AI_PROVIDERS } from "../shared/constants/providers.js";
+export { normalizeLmstudioMessages, resolveRuntimeProfileConfig } from "../../open-sse/services/runtimeProfile.js";
 
 /**
  * Detect xAI Grok models by id pattern (grok-*, Grok_*, etc).
@@ -28,6 +29,12 @@ export function normalizeProviderSpecificData(provider, body = {}, providerSpeci
   const next = providerSpecificData && typeof providerSpecificData === "object"
     ? { ...providerSpecificData }
     : {};
+
+  if (body.runtimeProfile === "lmstudio_local" || next.runtimeProfile === "lmstudio_local") {
+    next.runtimeProfile = "lmstudio_local";
+    const baseUrl = (next.baseUrl || body.baseUrl || body.baseURL || "").trim();
+    if (baseUrl) next.baseUrl = baseUrl;
+  }
 
   if (provider === "ollama-local") {
     const baseUrl = (

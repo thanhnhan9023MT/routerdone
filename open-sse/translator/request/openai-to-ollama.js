@@ -141,8 +141,8 @@ function normalizeMessages(messages) {
     const content = normalizeContent(msg.content);
     const images = extractImagesFromContent(msg.content);
 
-    // Skip empty messages (except assistant)
-    if (!content && role !== ROLE.ASSISTANT) continue;
+    // Keep image-only turns; Ollama accepts an empty content string with images.
+    if (!content && images.length === 0 && role !== ROLE.ASSISTANT) continue;
 
     const out = {
       role: role,

@@ -24,6 +24,20 @@ const creds = { apiKey: "k" };
 beforeEach(() => fetchMock.mockReset());
 
 describe("BaseExecutor.execute — retry by status (config-driven)", () => {
+  it("retries 503 with the provider recovery delay", async () => {
+    const ex = makeExec({ baseUrl: "https://x/api" });
+    fetchMock
+      .mockResolvedValueOnce(res(503))
+      .mockResolvedValueOnce(res(200));
+
+    const startedAt = Date.now();
+    const out = await ex.execute({ model: "m", body: {}, stream: false, credentials: creds });
+
+    expect(out.response.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(Date.now() - startedAt).toBeGreaterThanOrEqual(2900);
+  }, 5000);
+
   it("retries 502 `attempts` times then succeeds", async () => {
     const ex = makeExec({ baseUrl: "https://x/api", retry: { 502: { attempts: 3, delayMs: 0 } } });
     fetchMock
@@ -42,6 +56,20 @@ describe("BaseExecutor.execute — retry by status (config-driven)", () => {
     const out = await ex.execute({ model: "m", body: {}, stream: false, credentials: creds });
     expect(out.response.status).toBe(502);
     expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("does not retry transient status inside a combo attempt", async () => {
+    const ex = makeExec({ baseUrl: "https://x/api", retry: { 503: { attempts: 3, delayMs: 0 } } });
+    fetchMock.mockResolvedValue(res(503));
+    const out = await ex.execute({
+      model: "m",
+      body: {},
+      stream: true,
+      credentials: creds,
+      requestContext: { disableInternalRetries: true },
+    });
+    expect(out.response.status).toBe(503);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });
 

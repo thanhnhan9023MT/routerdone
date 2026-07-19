@@ -1,5 +1,24 @@
 // Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
 
+exports[`GOLDEN buildHeaders (default executor providers) > aidone → headers (apiKey / oauth) 1`] = `
+{
+  "apiKey": {
+    "Accept": "text/event-stream",
+    "Authorization": "Bearer <TOK>",
+    "Content-Type": "application/json",
+  },
+  "nonStream": {
+    "Authorization": "Bearer <TOK>",
+    "Content-Type": "application/json",
+  },
+  "oauth": {
+    "Accept": "text/event-stream",
+    "Authorization": "Bearer <TOK>",
+    "Content-Type": "application/json",
+  },
+}
+`;
+
 exports[`GOLDEN buildHeaders (default executor providers) > alicode → headers (apiKey / oauth) 1`] = `
 {
   "apiKey": {
@@ -229,10 +248,10 @@ exports[`GOLDEN buildHeaders (default executor providers) > cline → headers (a
     "Authorization": "Bearer <TOK>",
     "Content-Type": "application/json",
     "HTTP-Referer": "https://cline.bot",
-    "User-Agent": "RouterDone/0.5.80",
+    "User-Agent": "RouterDone/0.5.147",
     "X-CLIENT-TYPE": "routerdone",
-    "X-CLIENT-VERSION": "0.5.80",
-    "X-CORE-VERSION": "0.5.80",
+    "X-CLIENT-VERSION": "0.5.147",
+    "X-CORE-VERSION": "0.5.147",
     "X-IS-MULTIROOT": "false",
     "X-PLATFORM": "win32",
     "X-PLATFORM-VERSION": "v25.1.0",
@@ -242,10 +261,10 @@ exports[`GOLDEN buildHeaders (default executor providers) > cline → headers (a
     "Authorization": "Bearer <TOK>",
     "Content-Type": "application/json",
     "HTTP-Referer": "https://cline.bot",
-    "User-Agent": "RouterDone/0.5.80",
+    "User-Agent": "RouterDone/0.5.147",
     "X-CLIENT-TYPE": "routerdone",
-    "X-CLIENT-VERSION": "0.5.80",
-    "X-CORE-VERSION": "0.5.80",
+    "X-CLIENT-VERSION": "0.5.147",
+    "X-CORE-VERSION": "0.5.147",
     "X-IS-MULTIROOT": "false",
     "X-PLATFORM": "win32",
     "X-PLATFORM-VERSION": "v25.1.0",
@@ -256,10 +275,10 @@ exports[`GOLDEN buildHeaders (default executor providers) > cline → headers (a
     "Authorization": "Bearer <TOK>",
     "Content-Type": "application/json",
     "HTTP-Referer": "https://cline.bot",
-    "User-Agent": "RouterDone/0.5.80",
+    "User-Agent": "RouterDone/0.5.147",
     "X-CLIENT-TYPE": "routerdone",
-    "X-CLIENT-VERSION": "0.5.80",
-    "X-CORE-VERSION": "0.5.80",
+    "X-CLIENT-VERSION": "0.5.147",
+    "X-CORE-VERSION": "0.5.147",
     "X-IS-MULTIROOT": "false",
     "X-PLATFORM": "win32",
     "X-PLATFORM-VERSION": "v25.1.0",
@@ -964,6 +983,13 @@ exports[`GOLDEN buildHeaders (default executor providers) > xiaomi-mimo → head
     "Authorization": "Bearer <TOK>",
     "Content-Type": "application/json",
   },
+}
+`;
+
+exports[`GOLDEN buildUrl (default executor providers) > aidone → url (stream + non-stream) 1`] = `
+{
+  "nonStream": "http://127.0.0.1:1234/v1",
+  "stream": "http://127.0.0.1:1234/v1",
 }
 `;
 

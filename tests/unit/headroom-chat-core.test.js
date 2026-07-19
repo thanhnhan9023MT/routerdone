@@ -45,18 +45,19 @@ describe("handleChatCore Headroom diagnostics", () => {
       throw new Error(`unexpected fetch: ${url}`);
     });
     executeMock.mockResolvedValue({
-      response: new Response(JSON.stringify({
-        id: "chatcmpl-test",
-        object: "chat.completion",
-        choices: [{ message: { role: "assistant", content: "ok" }, finish_reason: "stop", index: 0 }],
-      }), { status: 200, headers: { "content-type": "application/json" } }),
+      response: new Response([
+        'data: {"id":"chatcmpl-test","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":null}]}',
+        'data: {"id":"chatcmpl-test","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}',
+        "data: [DONE]",
+        "",
+      ].join("\n\n"), { status: 200, headers: { "content-type": "text/event-stream" } }),
       url: "https://api.openai.com/v1/chat/completions",
       headers: {},
       transformedBody: null,
     });
   });
 
-  it("logs why Headroom was skipped on chat completions", async () => {
+  it("logs why Headroom fell back on chat completions", async () => {
     const log = { debug: vi.fn(), info: vi.fn(), warn: vi.fn() };
 
     await handleChatCore({
@@ -68,6 +69,7 @@ describe("handleChatCore Headroom diagnostics", () => {
       headroomEnabled: true,
       headroomUrl: "http://localhost:8787",
       headroomCompressUserMessages: false,
+      contextGuardHardCapTokens: 15,
       rtkEnabled: false,
       cavemanEnabled: false,
       ponytailEnabled: false,
@@ -80,7 +82,7 @@ describe("handleChatCore Headroom diagnostics", () => {
 
     expect(log.warn).toHaveBeenCalledWith(
       "HEADROOM",
-      expect.stringContaining("skipped: request failed")
+      expect.stringContaining("fallback: request failed")
     );
     expect(log.warn).toHaveBeenCalledWith(
       "HEADROOM",
@@ -108,6 +110,7 @@ describe("handleChatCore Headroom diagnostics", () => {
       headroomEnabled: true,
       headroomUrl: "https://user:secret@example.com:8787/proxy?token=abc123",
       headroomCompressUserMessages: false,
+      contextGuardHardCapTokens: 15,
       rtkEnabled: false,
       cavemanEnabled: false,
       ponytailEnabled: false,
@@ -137,6 +140,7 @@ describe("handleChatCore Headroom diagnostics", () => {
       headroomEnabled: true,
       headroomUrl: "https://user:secret@example.com:8787/proxy?token=abc123",
       headroomCompressUserMessages: false,
+      contextGuardHardCapTokens: 15,
       rtkEnabled: false,
       cavemanEnabled: false,
       ponytailEnabled: false,
@@ -184,6 +188,7 @@ describe("handleChatCore Headroom diagnostics", () => {
       headroomEnabled: true,
       headroomUrl: "http://localhost:8787",
       headroomCompressUserMessages: false,
+      contextGuardHardCapTokens: 15,
       rtkEnabled: false,
       cavemanEnabled: false,
       ponytailEnabled: false,
@@ -235,6 +240,7 @@ describe("handleChatCore Headroom diagnostics", () => {
       headroomEnabled: true,
       headroomUrl: "http://localhost:8787",
       headroomCompressUserMessages: false,
+      contextGuardHardCapTokens: 15,
       rtkEnabled: false,
       cavemanEnabled: false,
       ponytailEnabled: false,
@@ -258,7 +264,7 @@ describe("handleChatCore Headroom diagnostics", () => {
       messages.push({
         type: "reasoning",
         id: `rs_${i}`,
-        encrypted_content: "x".repeat(6000),
+        encrypted_content: "x".repeat(1200),
         summary: [{ type: "summary_text", text: `reasoning ${i}` }],
       });
     }
@@ -274,7 +280,8 @@ describe("handleChatCore Headroom diagnostics", () => {
       rtkEnabled: false,
       cavemanEnabled: false,
       ponytailEnabled: false,
-      contextGuardMaxBytes: 3_500_000,
+      contextGuardMaxBytes: 1000,
+      contextGuardHardCapTokens: 2000,
       clientRawRequest: {
         endpoint: "/v1/chat/completions",
         body: {},
@@ -299,7 +306,7 @@ describe("handleChatCore Headroom diagnostics", () => {
       messages.push({
         type: "reasoning",
         id: `rs_soft_${i}`,
-        encrypted_content: "x".repeat(20000),
+        encrypted_content: "x".repeat(1200),
         summary: [{ type: "summary_text", text: `reasoning ${i}` }],
       });
     }
@@ -315,7 +322,7 @@ describe("handleChatCore Headroom diagnostics", () => {
       rtkEnabled: false,
       cavemanEnabled: false,
       ponytailEnabled: false,
-      contextGuardMaxBytes: 3_500_000,
+      contextGuardMaxBytes: 1000,
       contextGuardKeepRecent: 8,
       clientRawRequest: {
         endpoint: "/v1/chat/completions",

@@ -1,4 +1,5 @@
 import { detectFormat, getTargetFormat, resolveTransport } from "../services/provider.js";
+import { normalizeLmstudioMessages } from "../services/runtimeProfile.js";
 import { translateRequest } from "../translator/index.js";
 import { FORMATS } from "../translator/formats.js";
 import { normalizeClaudePassthrough } from "../translator/formats/claude.js";
@@ -24,7 +25,7 @@ import { injectCaveman } from "../rtk/caveman.js";
 import { injectPonytail } from "../rtk/ponytail.js";
 import { compressMessages, formatRtkLog } from "../rtk/index.js";
 import { guardContext, formatContextGuardLog, estimateInputTokens, pruneContextToHardCap, formatHardCapPruneLog } from "../rtk/contextGuard.js";
-import { compressWithHeadroom, formatHeadroomSizeLog, isHeadroomPhantomSavings } from "../rtk/headroom.js";
+import { compressWithHeadroom, formatHeadroomSizeLog, isHeadroomPhantomSavings, resolveHeadroomDecision } from "../rtk/headroom.js";
 import { getCapabilitiesForModel } from "../providers/capabilities.js";
 import { stripUnsupportedModalities } from "../translator/concerns/modality.js";
 import { prefetchRemoteImages } from "../translator/concerns/prefetch.js";
@@ -39,15 +40,16 @@ const DEFAULT_CONTEXT_GUARD_KEEP_RECENT = Math.max(1, Number(process.env.CONTEXT
  * @param {object} options.credentials - Provider credentials
  * @param {string} options.sourceFormatOverride - Override detected source format (e.g. "openai-responses")
  */
-export async function handleChatCore({ body, modelInfo, credentials, log, onCredentialsRefreshed, onRequestSuccess, onDisconnect, clientRawRequest, connectionId, userAgent, apiKey, ccFilterNaming, rtkEnabled, headroomEnabled, headroomUrl, headroomCompressUserMessages, cavemanEnabled, cavemanLevel, ponytailEnabled, ponytailLevel, contextGuardEnabled, contextGuardMaxBytes, contextGuardKeepRecent, contextGuardHardCapTokens, sourceFormatOverride, providerThinking, routeInfo = null, streamTimeoutPolicy = null, streamPreflightTimeoutMs = null }) {
+export async function handleChatCore({ body, modelInfo, credentials, log, onCredentialsRefreshed, onRequestSuccess, onDisconnect, clientRawRequest, connectionId, userAgent, apiKey, ccFilterNaming, rtkEnabled, headroomEnabled, headroomUrl, headroomCompressModel, headroomCompressUserMessages, headroomAdaptive, cavemanEnabled, cavemanLevel, ponytailEnabled, ponytailLevel, contextGuardEnabled, contextGuardMaxBytes, contextGuardKeepRecent, contextGuardHardCapTokens, responsesCompactionEnabled, responsesCompactionThresholdTokens, sourceFormatOverride, providerThinking, routeInfo = null, streamTimeoutPolicy = null, streamPreflightTimeoutMs = null }) {
   const { provider, model } = modelInfo;
   const requestStartTime = Date.now();
   const routeMode = routeInfo?.routeMode || (routeInfo?.comboName ? "combo" : "direct");
-  const resolvedStreamPolicy = resolveRoutePolicy(routeMode, { stream: streamTimeoutPolicy, streamPreflightTimeoutMs }).stream;
+  const resolvedStreamPolicy = resolveRoutePolicy(routeMode, { stream: streamTimeoutPolicy, streamPreflightTimeoutMs, providerSpecificData: credentials?.providerSpecificData }).stream;
   const headersDeadlineMs = routeMode === "direct"
     ? null
     : (resolvedStreamPolicy.firstByteTimeoutMs || 3000) + (resolvedStreamPolicy.firstProductiveTimeoutMs || 8000);
 
+  body = normalizeLmstudioMessages(body, credentials?.providerSpecificData);
   const sourceFormat = sourceFormatOverride || detectFormat(body);
 
   // Check for bypass patterns (warmup, skip, cc naming)
@@ -114,21 +116,31 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   // Skip all translation/normalization — only model and Bearer are swapped
   const clientTool = detectClientTool(clientRawRequest?.headers || {}, body);
   const passthrough = isNativePassthrough(clientTool, provider);
+  // Native OpenAI Responses compaction; provider returns opaque compaction items.
+  if (sourceFormat === FORMATS.OPENAI_RESPONSES && responsesCompactionEnabled === true && !body.context_management ) {
+    const threshold = Number(responsesCompactionThresholdTokens);
+    if (Number.isSafeInteger(threshold) && threshold >= 1) {
+      body = { ...body, context_management: [{ type: "compaction", compact_threshold: threshold }] };
+    }
+  }
 
   // Expose raw client headers to translators/executors for session-id resolution
   if (credentials) credentials.rawHeaders = clientRawRequest?.headers || {};
 
-  // Auto-strip media blocks the model can't read (vision/audio/pdf) before translation.
-  if (!passthrough) {
+  // Validate/strip media before dispatch, including native passthrough. Translation
+  // may be skipped, but malformed client media must never bypass the boundary.
+  {
     const caps = getCapabilitiesForModel(provider, model);
     if (stripUnsupportedModalities(body, sourceFormat, caps)) {
       log?.debug?.("MODALITY", `stripped unsupported media for ${provider}/${model}`);
     }
-    // Convert remote image URLs to base64 for targets that can't fetch URLs.
-    try {
-      const n = await prefetchRemoteImages(body, sourceFormat, targetFormat, { signal: undefined });
-      if (n > 0) log?.debug?.("MODALITY", `prefetched ${n} remote image(s) for ${targetFormat}`);
-    } catch (e) { log?.warn?.("MODALITY", `image prefetch failed: ${e.message}`); }
+    // Remote prefetch remains disabled for native passthrough to preserve native semantics.
+    if (!passthrough) {
+      try {
+        const n = await prefetchRemoteImages(body, sourceFormat, targetFormat, { signal: undefined });
+        if (n > 0) log?.debug?.("MODALITY", `prefetched ${n} remote image(s) for ${targetFormat}`);
+      } catch (e) { log?.warn?.("MODALITY", `image prefetch failed: ${e.message}`); }
+    }
   }
 
   let translatedBody;
@@ -165,6 +177,13 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   // Covers both passthrough (source shape) and translated (target shape) flows
   const finalFormat = passthrough ? sourceFormat : targetFormat;
 
+  // Final image boundary after translation: translators can create a malformed
+  // target image shape even when the source request was valid.
+  const finalCaps = getCapabilitiesForModel(provider, model);
+  if (stripUnsupportedModalities(translatedBody, finalFormat, finalCaps)) {
+    log?.debug?.("MODALITY", `validated final media shape for ${provider}/${model}`);
+  }
+
   // TTS models don't support tool messages/function calling
   if (getModelType(alias, model) === "tts" && translatedBody.messages) {
     translatedBody.messages = translatedBody.messages.filter(msg => msg.role !== "tool");
@@ -199,13 +218,25 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   const ctxGuardLine = formatContextGuardLog(ctxGuardStats);
   if (ctxGuardLine) console.log(ctxGuardLine);
 
-  // Headroom: optional external proxy compression; fail open if proxy is absent.
+  // Headroom: adaptive external compression; small requests bypass the extra network hop.
   const headroomDiagnostics = {};
-  const headroomStats = await compressWithHeadroom(translatedBody, { enabled: headroomEnabled, url: headroomUrl, model: upstreamModel, format: finalFormat, compressUserMessages: headroomCompressUserMessages, diagnostics: headroomDiagnostics });
+  const headroomDecision = resolveHeadroomDecision({
+    estimatedTokens: estimateInputTokens(translatedBody, upstreamModel),
+    hardCapTokens,
+    config: { ...(headroomAdaptive || {}), enabled: headroomEnabled && headroomAdaptive?.enabled !== false },
+    isCompact,
+  });
+  headroomDiagnostics.decision = headroomDecision.mode;
+  headroomDiagnostics.ratioPercent = Math.round(headroomDecision.ratioPercent * 10) / 10;
+  const headroomStats = headroomDecision.mode === "bypass"
+    ? null
+    : await compressWithHeadroom(translatedBody, { enabled: true, url: headroomUrl, model: headroomCompressModel?.trim() || upstreamModel, format: finalFormat, compressUserMessages: headroomCompressUserMessages, timeoutMs: headroomDecision.timeoutMs, diagnostics: headroomDiagnostics });
   const headroomLine = formatHeadroomSizeLog(headroomStats, headroomDiagnostics);
   if (headroomLine) log?.info?.("HEADROOM", headroomLine);
-  if (!headroomStats && headroomEnabled && headroomDiagnostics.reason) {
-    log?.warn?.("HEADROOM", `skipped: ${headroomDiagnostics.reason}`);
+  if (headroomDecision.mode === "bypass") {
+    log?.debug?.("HEADROOM", `bypassed: ${headroomDecision.reason} | ratio=${headroomDiagnostics.ratioPercent}%`);
+  } else if (!headroomStats && headroomEnabled && headroomDiagnostics.reason) {
+    log?.warn?.("HEADROOM", `fallback: ${headroomDiagnostics.reason} | mode=${headroomDecision.mode}`);
   }
   if (isHeadroomPhantomSavings(headroomStats, headroomDiagnostics)) {
     log?.warn?.("HEADROOM", "reported token delta, but outbound JSON shrank <5%; provider may bill near-original payload");
@@ -319,7 +350,7 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
     }, headersDeadlineMs);
   }
   try {
-    const result = await executor.execute({ model, body: translatedBody, stream, credentials, signal: streamController.signal, log, proxyOptions });
+    const result = await executor.execute({ model, body: translatedBody, stream, credentials, signal: streamController.signal, log, proxyOptions, requestContext: { isCompact, disableInternalRetries: routeMode === "combo" || routeMode === "fusion" } });
     providerResponse = result.response;
     providerUrl = result.url;
     providerHeaders = result.headers;
@@ -361,7 +392,7 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
           try { await onCredentialsRefreshed(newCredentials); } catch (e) { log?.warn?.("TOKEN", `onCredentialsRefreshed failed: ${e.message}`); }
         }
         try {
-          const retryResult = await executor.execute({ model, body: translatedBody, stream, credentials, signal: streamController.signal, log, proxyOptions });
+          const retryResult = await executor.execute({ model, body: translatedBody, stream, credentials, signal: streamController.signal, log, proxyOptions, requestContext: { isCompact, disableInternalRetries: routeMode === "combo" || routeMode === "fusion" } });
           if (retryResult.response.ok) { providerResponse = retryResult.response; providerUrl = retryResult.url; }
         } catch { log?.warn?.("TOKEN", `${provider.toUpperCase()} | retry after refresh failed`); }
       } else {
@@ -418,7 +449,7 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
     : resolvedStreamPolicy;
 
   const retryEmptyStream = async () => {
-    const retryResult = await executor.execute({ model, body: translatedBody, stream, credentials, signal: streamController.signal, log, proxyOptions });
+    const retryResult = await executor.execute({ model, body: translatedBody, stream, credentials, signal: streamController.signal, log, proxyOptions, requestContext: { isCompact, disableInternalRetries: routeMode === "combo" || routeMode === "fusion" } });
     reqLogger.logTargetRequest(retryResult.url, retryResult.headers, retryResult.transformedBody);
     if (retryResult.transformedBody) finalBody = retryResult.transformedBody;
     return retryResult;

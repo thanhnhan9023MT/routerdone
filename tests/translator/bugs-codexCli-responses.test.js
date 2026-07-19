@@ -30,9 +30,7 @@ describe("Codex CLI Responses → OpenAI", () => {
     expect(typeof asst.tool_calls[0].function.arguments).toBe("string");
   });
 
-  // openai-responses.js:75-77 — input_image uses file_id as raw url
-  // KNOWN BUG
-  it.fails("input_image with file_id is not used as a raw url", () => {
+  it("input_image with file_id is omitted instead of becoming a raw URL", () => {
     const out = R2O({
       input: [{ type: "message", role: "user", content: [
         { type: "input_image", file_id: "file-abc" },
@@ -43,8 +41,32 @@ describe("Codex CLI Responses → OpenAI", () => {
     // A bare file_id is not a valid image URL
     expect(img?.image_url?.url === "file-abc").toBe(false);
   });
+
+  it("normalizes object-shaped input_image URL", () => {
+    const out = R2O({
+      input: [{ type: "message", role: "user", content: [
+        { type: "input_image", image_url: { url: "https://example.com/image.png", detail: "high" } },
+      ] }],
+    });
+    const image = out.messages[0].content.find((c) => c.type === "image_url");
+    expect(image.image_url).toEqual({ url: "https://example.com/image.png", detail: "high" });
+  });
 });
 
+describe("OpenAI → Codex Responses input normalization", () => {
+  it("normalizes object image_url and omits missing image references in existing input", () => {
+    const out = O2R({
+      input: [{ type: "message", role: "user", content: [
+        { type: "input_image", image_url: { url: "https://example.com/image.png", detail: "high" } },
+        { type: "input_image", file_id: "file-abc" },
+      ] }],
+    });
+    expect(out.input[0].content).toEqual([
+      { type: "input_image", image_url: "https://example.com/image.png" },
+      { type: "input_text", text: "[image omitted: missing image reference]" },
+    ]);
+  });
+});
 describe("OpenAI → Codex Responses (reverse)", () => {
   it("maps developer messages to Responses API instructions", () => {
     const out = O2R({

@@ -1,5 +1,7 @@
 import { getConsoleLogEntries, getConsoleEmitter, initConsoleLogCapture, setConsoleLogRetentionMs } from "@/lib/consoleLogBuffer";
 import { getSettings } from "@/lib/localDb";
+// Static import so Next.js standalone build includes errorLogsRepo module
+import { getErrorLogs } from "@/lib/db/repos/errorLogsRepo.js";
 
 export const dynamic = "force-dynamic";
 
@@ -28,11 +30,30 @@ export async function GET(request) {
   request.signal.addEventListener("abort", cleanup, { once: true });
 
   const stream = new ReadableStream({
-    start(controller) {
-      // Send all buffered logs immediately on connect
+    async start(controller) {
+      // Get buffered in-memory logs
       const buffered = getConsoleLogEntries();
-      if (buffered.length > 0) {
-        controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: "init", logs: buffered })}\n\n`));
+
+      // Load persistent error logs from DB (survives restarts)
+      let dbErrors = [];
+      try {
+        const persistedErrors = await getErrorLogs({ limit: 500 });
+        // Convert DB errors to log entry format, filtering out ones already in the buffer
+        const bufferedLines = new Set(buffered.map(e => e.line));
+        dbErrors = persistedErrors
+          .filter(e => !bufferedLines.has(e.message))
+          .map(e => ({
+            line: "[" + e.level.toUpperCase() + "] " + (e.source ? "[" + e.source + "] " : "") + e.message,
+            createdAt: new Date(e.timestamp).getTime(),
+          }));
+      } catch (dbErr) {
+        // Silently skip — DB may not have the table yet on first boot
+      }
+
+      // Merge: DB errors first (historical), then current buffer
+      const allLogs = [...dbErrors, ...buffered];
+      if (allLogs.length > 0) {
+        controller.enqueue(encoder.encode("data: " + JSON.stringify({ type: "init", logs: allLogs }) + "\n\n"));
       }
 
       // Push new lines as they arrive
@@ -40,7 +61,7 @@ export async function GET(request) {
         if (state.closed) return;
         const payload = typeof entry === "string" ? { line: entry, createdAt: Date.now() } : entry;
         try {
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: "line", entry: payload, line: payload.line })}\n\n`));
+          controller.enqueue(encoder.encode("data: " + JSON.stringify({ type: "line", entry: payload, line: payload.line }) + "\n\n"));
         } catch {
           cleanup();
         }
@@ -50,7 +71,7 @@ export async function GET(request) {
       state.sendClear = () => {
         if (state.closed) return;
         try {
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: "clear" })}\n\n`));
+          controller.enqueue(encoder.encode("data: " + JSON.stringify({ type: "clear" }) + "\n\n"));
         } catch {
           cleanup();
         }
@@ -59,7 +80,7 @@ export async function GET(request) {
       state.sendPrune = (logs) => {
         if (state.closed) return;
         try {
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: "sync", logs })}\n\n`));
+          controller.enqueue(encoder.encode("data: " + JSON.stringify({ type: "sync", logs }) + "\n\n"));
         } catch {
           cleanup();
         }

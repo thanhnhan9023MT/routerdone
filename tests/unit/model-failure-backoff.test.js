@@ -145,6 +145,16 @@ describe("provider self-heal errors", () => {
     });
   });
 
+  for (const status of [502, 503, 504]) {
+    it(`classifies HTTP ${status} as a short self-heal provider error`, () => {
+      expect(checkFallbackError(status, "upstream provider error")).toMatchObject({
+        shouldFallback: true,
+        cooldownMs: PROVIDER_SELF_HEAL_COOLDOWN_MS,
+        selfHeal: true,
+      });
+    });
+  }
+
   it("classifies empty upstream stream as a short self-heal provider error", () => {
     const r = checkFallbackError(502, "Empty upstream stream (terminal before productive)");
     expect(r).toMatchObject({

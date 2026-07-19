@@ -1,0 +1,38 @@
+[
+  {
+    "name": "claude-fable-5",
+    "visionModel": "ahm/glm-5v-turbo"
+  },
+  {
+    "name": "claude-opus-4-6",
+    "visionModel": "ahm/glm-5v-turbo"
+  },
+  {
+    "name": "claude-opus-4-7",
+    "visionModel": "ahm/glm-5v-turbo"
+  },
+  {
+    "name": "claude-opus-4-8",
+    "visionModel": "ahm/glm-5v-turbo"
+  },
+  {
+    "name": "claude-opus-4-8-kr",
+    "visionModel": "ahm/glm-5v-turbo"
+  },
+  {
+    "name": "claude-opus-4-8-ln",
+    "visionModel": "ahm/glm-5v-turbo"
+  },
+  {
+    "name": "claude-opus-4-8-vip",
+    "visionModel": "ahm/glm-5v-turbo"
+  },
+  {
+    "name": "claude-sonnet-4-6",
+    "visionModel": "ahm/glm-5v-turbo"
+  },
+  {
+    "name": "claude-sonnet-5",
+    "visionModel": "ahm/glm-5v-turbo"
+  }
+]

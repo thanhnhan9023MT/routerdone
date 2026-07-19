@@ -1,8 +1,8 @@
-﻿"use client";
+"use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import PropTypes from "prop-types";
-import { Card, Button, Input, Modal, CardSkeleton, Toggle, ConfirmModal } from "@/shared/components";
+import { Card, Button, Input, Modal, CardSkeleton, Toggle, ConfirmModal, ModelSelectModal } from "@/shared/components";
 import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
 import { getCurrentLocale, onLocaleChange } from "@/i18n/runtime";
 import KeyLimitModal from "./components/KeyLimitModal";
@@ -38,7 +38,10 @@ export default function APIPageClient({ machineId }) {
   const [rtkEnabled, setRtkEnabledState] = useState(true);
   const [headroomEnabled, setHeadroomEnabled] = useState(false);
   const [headroomUrl, setHeadroomUrl] = useState("http://localhost:8787");
+  const [headroomCompressModel, setHeadroomCompressModel] = useState("");
   const [headroomCompressUserMessages, setHeadroomCompressUserMessages] = useState(false);
+  const [headroomAdaptive, setHeadroomAdaptive] = useState({ enabled: true, softThresholdPercent: 70, mandatoryThresholdPercent: 85, compactThresholdPercent: 95, softTimeoutMs: 1500, mandatoryTimeoutMs: 3000 });
+  const [headroomAdaptiveError, setHeadroomAdaptiveError] = useState("");
   const [headroomStatus, setHeadroomStatus] = useState({ installed: false, running: false, python: null, loading: true });
   const [showHeadroomInstallModal, setShowHeadroomInstallModal] = useState(false);
   const [headroomActionLoading, setHeadroomActionLoading] = useState(false);
@@ -47,6 +50,14 @@ export default function APIPageClient({ machineId }) {
   const [cavemanLevel, setCavemanLevel] = useState("full");
   const [ponytailEnabled, setPonytailEnabled] = useState(false);
   const [ponytailLevel, setPonytailLevel] = useState("full");
+  const [contextBackup, setContextBackup] = useState({ enabled: true, thresholdTokens: 81000, retainRecentTurns: 3, codexConnectionId: "", compressModel: "" });
+  const [availableModels, setAvailableModels] = useState([]);
+  const [activeProviders, setActiveProviders] = useState([]);
+  const [modelAliases, setModelAliases] = useState({});
+  const [showCompactModelSelect, setShowCompactModelSelect] = useState(false);
+  const [compactModelSlot, setCompactModelSlot] = useState("primary");
+  const [responsesCompactionEnabled, setResponsesCompactionEnabled] = useState(false);
+  const [responsesCompactionThresholdTokens, setResponsesCompactionThresholdTokens] = useState(81000);
   const [locale, setLocale] = useState("en");
 
   // Cloudflare Tunnel state
@@ -230,6 +241,33 @@ export default function APIPageClient({ machineId }) {
     } catch { /* ignore poll errors */ }
   };
 
+  const loadAliases = async () => {
+    try {
+      const res = await fetch("/api/models/alias", { cache: "no-store" });
+      if (res.ok) { const data = await res.json(); setModelAliases(data.aliases || data || {}); }
+    } catch { /* optional aliases */ }
+  };
+
+  const loadProviders = async () => {
+    try {
+      const res = await fetch("/api/providers", { cache: "no-store" });
+      if (res.ok) {
+        const data = await res.json();
+        setActiveProviders(Array.isArray(data.connections) ? data.connections : []);
+      }
+    } catch { /* optional provider list */ }
+  };
+
+  const loadModels = async () => {
+    try {
+      const res = await fetch("/api/models", { cache: "no-store" });
+      if (res.ok) {
+        const data = await res.json();
+        setAvailableModels(Array.isArray(data.models) ? data.models : []);
+      }
+    } catch { /* optional model list */ }
+  };
+
   const loadSettings = async () => {
     setTunnelChecking(true);
     try {
@@ -247,11 +285,15 @@ export default function APIPageClient({ machineId }) {
         setHeadroomEnabled(!!data.headroomEnabled);
         setHeadroomUrl(data.headroomUrl || "http://localhost:8787");
         setHeadroomCompressUserMessages(!!data.headroomCompressUserMessages);
+        setHeadroomAdaptive(data.headroomAdaptive || { enabled: true, softThresholdPercent: 70, mandatoryThresholdPercent: 85, compactThresholdPercent: 95, softTimeoutMs: 1500, mandatoryTimeoutMs: 3000 });
         refreshHeadroomStatus();
         setCavemanEnabled(!!data.cavemanEnabled);
         setCavemanLevel(data.cavemanLevel || "full");
         setPonytailEnabled(!!data.ponytailEnabled);
         setPonytailLevel(data.ponytailLevel || "full");
+        setContextBackup(data.routerDoneContextBackup || { enabled: true, thresholdTokens: 81000, retainRecentTurns: 3, codexConnectionId: "", compressModel: "", compressFallbackModel: "" });
+        setResponsesCompactionEnabled(data.responsesCompactionEnabled === true);
+        setResponsesCompactionThresholdTokens(data.responsesCompactionThresholdTokens || 81000);
       }
       if (statusRes.ok) {
         const data = await statusRes.json();
@@ -316,13 +358,19 @@ export default function APIPageClient({ machineId }) {
 
   const patchSetting = async (patch) => {
     try {
-      await fetch("/api/settings", {
+      const res = await fetch("/api/settings", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(patch),
       });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || "Failed to update setting");
+      }
+      return true;
     } catch (error) {
       console.log("Error updating setting:", error);
+      return false;
     }
   };
 
@@ -348,6 +396,23 @@ export default function APIPageClient({ machineId }) {
   const handleHeadroomCompressUserMessages = (value) => {
     setHeadroomCompressUserMessages(value);
     patchSetting({ headroomCompressUserMessages: value });
+  };
+
+  const updateHeadroomAdaptive = async (key, rawValue) => {
+    const value = Number(rawValue);
+    const next = { ...headroomAdaptive, [key]: value };
+    const thresholds = [next.softThresholdPercent, next.mandatoryThresholdPercent, next.compactThresholdPercent];
+    const valid = thresholds.every((v) => Number.isInteger(v) && v >= 50 && v <= 99)
+      && thresholds[0] < thresholds[1] && thresholds[1] < thresholds[2]
+      && [next.softTimeoutMs, next.mandatoryTimeoutMs].every((v) => Number.isInteger(v) && v >= 500 && v <= 5000);
+    setHeadroomAdaptive(next);
+    if (!valid) {
+      setHeadroomAdaptiveError("Thresholds must be ordered (50–99%); timeouts must be 500–5000 ms.");
+      return;
+    }
+    setHeadroomAdaptiveError("");
+    const saved = await patchSetting({ headroomAdaptive: next });
+    if (!saved) setHeadroomAdaptiveError("Could not save Headroom settings.");
   };
 
   const refreshHeadroomStatus = useCallback(async () => {
@@ -1328,14 +1393,68 @@ export default function APIPageClient({ machineId }) {
               </button>
             </div>
             <p className="text-sm text-text-muted mt-1">
-              Compress prompts via /v1/compress before routing to the model
+              Adaptive compression via /v1/compress; small requests bypass the extra hop
             </p>
+            {headroomRunning && (
+              <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
+                <label className="text-text-muted" htmlFor="headroom-compress-model">Compression model</label>
+                <Input id="headroom-compress-model" value={headroomCompressModel} placeholder="Use routed model" onChange={(e) => setHeadroomCompressModel(e.target.value)} onBlur={() => patchSetting({ headroomCompressModel: headroomCompressModel.trim() })} className="w-56" />
+                <span className="text-text-muted">Optional: provider/model</span>
+              </div>
+            )}
+            {headroomEnabled && headroomRunning && (
+              <div className="mt-3 flex gap-2 flex-wrap items-center text-xs">
+                <label className="text-text-muted">Start %</label>
+                <Input type="number" min="50" max="99" value={headroomAdaptive.softThresholdPercent} onChange={(e) => setHeadroomAdaptive((v) => ({ ...v, softThresholdPercent: Number(e.target.value) }))} onBlur={(e) => updateHeadroomAdaptive("softThresholdPercent", e.target.value)} className="w-20" />
+                <label className="text-text-muted">Required %</label>
+                <Input type="number" min="50" max="99" value={headroomAdaptive.mandatoryThresholdPercent} onChange={(e) => setHeadroomAdaptive((v) => ({ ...v, mandatoryThresholdPercent: Number(e.target.value) }))} onBlur={(e) => updateHeadroomAdaptive("mandatoryThresholdPercent", e.target.value)} className="w-20" />
+                <label className="text-text-muted">Recovery %</label>
+                <Input type="number" min="50" max="99" value={headroomAdaptive.compactThresholdPercent} onChange={(e) => setHeadroomAdaptive((v) => ({ ...v, compactThresholdPercent: Number(e.target.value) }))} onBlur={(e) => updateHeadroomAdaptive("compactThresholdPercent", e.target.value)} className="w-20" />
+                <label className="text-text-muted">Timeout ms</label>
+                <Input type="number" min="500" max="5000" value={headroomAdaptive.softTimeoutMs} onChange={(e) => setHeadroomAdaptive((v) => ({ ...v, softTimeoutMs: Number(e.target.value) }))} onBlur={(e) => updateHeadroomAdaptive("softTimeoutMs", e.target.value)} className="w-24" />
+                <Input type="number" min="500" max="5000" value={headroomAdaptive.mandatoryTimeoutMs} onChange={(e) => setHeadroomAdaptive((v) => ({ ...v, mandatoryTimeoutMs: Number(e.target.value) }))} onBlur={(e) => updateHeadroomAdaptive("mandatoryTimeoutMs", e.target.value)} className="w-24" />
+                {headroomAdaptiveError && <span className="text-red-500 basis-full">{headroomAdaptiveError}</span>}
+              </div>
+            )}
           </div>
           <Toggle
             checked={headroomEnabled && headroomRunning}
             disabled={!headroomRunning}
             onChange={() => handleHeadroomEnabled(!headroomEnabled)}
           />
+        </div>
+        <div className="flex items-center justify-between pt-4 border-t border-border gap-4 flex-wrap">
+          <div className="min-w-0 flex-1">
+            <p className="font-medium">OpenAI Responses server-side compaction (chỉ khi upstream hỗ trợ /v1/responses)</p>
+            <p className="text-sm text-text-muted mt-1">Native opaque compaction item; no separate compression model required.</p>
+            {responsesCompactionEnabled && (
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <label className="text-xs text-text-muted" htmlFor="responses-compaction-threshold">Compact from</label>
+                <Input id="responses-compaction-threshold" type="number" min="1" value={responsesCompactionThresholdTokens} onChange={(e) => setResponsesCompactionThresholdTokens(e.target.value)} onBlur={() => patchSetting({ responsesCompactionThresholdTokens: Number(responsesCompactionThresholdTokens) })} className="w-32" />
+                <span className="text-xs text-text-muted">tokens</span>
+              </div>
+            )}
+          </div>
+          <Toggle checked={responsesCompactionEnabled} onChange={() => { const next = !responsesCompactionEnabled; setResponsesCompactionEnabled(next); patchSetting({ responsesCompactionEnabled: next, responsesCompactionThresholdTokens: Number(responsesCompactionThresholdTokens) }); }} />
+        </div>
+        <div className="flex items-center justify-between pt-4 border-t border-border gap-4 flex-wrap">
+          <div className="min-w-0 flex-1">
+            <p className="font-medium">RouterDone context summary backup</p>
+            <p className="text-sm text-text-muted mt-1">Optional context-summary backup for any target; enable only when needed.</p>
+            {contextBackup.enabled && (
+              <div className="mt-3 flex gap-2 flex-wrap items-center">
+                <label className="text-xs text-text-muted">Compact from</label>
+                <Input type="number" min="36000" step="1" value={contextBackup.thresholdTokens} onChange={(e) => setContextBackup((v) => ({ ...v, thresholdTokens: e.target.value }))} onBlur={() => patchSetting({ routerDoneContextBackup: { ...contextBackup, thresholdTokens: Number(contextBackup.thresholdTokens) } })} className="w-32" />
+                <label className="text-xs text-text-muted">tokens; keep turns</label>
+                <Input type="number" min="1" value={contextBackup.retainRecentTurns} onChange={(e) => setContextBackup((v) => ({ ...v, retainRecentTurns: e.target.value }))} onBlur={() => patchSetting({ routerDoneContextBackup: { ...contextBackup, retainRecentTurns: Number(contextBackup.retainRecentTurns) } })} className="w-20" />
+                <label className="text-xs text-text-muted">compact model</label>
+                <Button size="sm" variant="secondary" onClick={() => { setCompactModelSlot("primary"); setShowCompactModelSelect(true); }}>{contextBackup.compressModel || "Local summary"}</Button>
+                <label className="text-xs text-text-muted">fallback</label>
+                <Button size="sm" variant="secondary" onClick={() => { setCompactModelSlot("fallback"); setShowCompactModelSelect(true); }}>{contextBackup.compressFallbackModel || "Local summary"}</Button>
+              </div>
+            )}
+          </div>
+          <Toggle checked={contextBackup.enabled} onChange={() => { const next = { ...contextBackup, enabled: !contextBackup.enabled }; setContextBackup(next); patchSetting({ routerDoneContextBackup: next }); }} />
         </div>
         <div className="flex items-center justify-between pt-4 gap-4 flex-wrap">
           <div className="min-w-0 flex-1">
@@ -1433,6 +1552,25 @@ export default function APIPageClient({ machineId }) {
         </div>
       </Card>
 
+
+      <ModelSelectModal
+        isOpen={showCompactModelSelect}
+        onClose={() => setShowCompactModelSelect(false)}
+        onSelect={(selection) => {
+          const value = selection?.value || "";
+          const next = { ...contextBackup, [compactModelSlot === "fallback" ? "compressFallbackModel" : "compressModel"]: value };
+          setContextBackup(next);
+          patchSetting({ routerDoneContextBackup: next });
+          setShowCompactModelSelect(false);
+        }}
+        activeProviders={activeProviders}
+        modelAliases={modelAliases}
+        availableModels={availableModels}
+        showAllProviders
+        selectedModel={(compactModelSlot === "fallback" ? contextBackup.compressFallbackModel : contextBackup.compressModel) || null}
+        title="Select Context Compact Model"
+        closeOnSelect={true}
+/>
       {/* Add Key Modal */}
       <Modal
         isOpen={showAddModal}

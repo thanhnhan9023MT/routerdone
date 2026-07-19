@@ -1,0 +1,62 @@
+[
+  {
+    "name": "claude-fable-5",
+    "models": [
+      "euro/accounts/euromodels/models/claude-fable-5"
+    ]
+  },
+  {
+    "name": "claude-opus-4-6",
+    "models": [
+      "euro/accounts/euromodels/models/claude-opus-4.8"
+    ]
+  },
+  {
+    "name": "claude-opus-4-7",
+    "models": [
+      "euro/accounts/euromodels/models/claude-opus-4.8"
+    ]
+  },
+  {
+    "name": "claude-opus-4-8",
+    "models": [
+      "euro/accounts/euromodels/models/claude-opus-4.8"
+    ]
+  },
+  {
+    "name": "claude-opus-4-8-kr",
+    "models": [
+      "euro/accounts/euromodels/models/claude-opus-4.8"
+    ]
+  },
+  {
+    "name": "claude-opus-4-8-ln",
+    "models": [
+      "euro/accounts/euromodels/models/claude-opus-4.8"
+    ]
+  },
+  {
+    "name": "claude-opus-4-8-vip",
+    "models": [
+      "euro/accounts/euromodels/models/claude-opus-4.8"
+    ]
+  },
+  {
+    "name": "claude-opus-4.8-v",
+    "models": [
+      "euro/accounts/euromodels/models/claude-opus-4.8"
+    ]
+  },
+  {
+    "name": "claude-sonnet-4-6",
+    "models": [
+      "euro/accounts/euromodels/models/claude-sonnet-5"
+    ]
+  },
+  {
+    "name": "claude-sonnet-5",
+    "models": [
+      "euro/accounts/euromodels/models/claude-sonnet-5"
+    ]
+  }
+]

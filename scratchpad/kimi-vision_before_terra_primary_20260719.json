@@ -1,0 +1,9 @@
+{
+  "name": "kimi-k2.7-vision",
+  "models": [
+    "ollama/kimi-k2.7-code",
+    "euro/accounts/euromodels/models/kimi-k2.7-code",
+    "ocg/kimi-k2.7-code",
+    "nhan/kimi-2.7"
+  ]
+}

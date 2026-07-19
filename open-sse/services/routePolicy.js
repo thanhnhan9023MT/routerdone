@@ -1,3 +1,4 @@
+import { resolveRuntimeProfileConfig } from "./runtimeProfile.js";
 import {
   DIRECT_STREAM_FIRST_BYTE_TIMEOUT_MS,
   DIRECT_STREAM_FIRST_PRODUCTIVE_TIMEOUT_MS,
@@ -84,13 +85,15 @@ export function adaptiveFirstProductiveTimeoutMs(routeMode, fallbackMs, stats = 
 export function resolveRoutePolicy(routeMode = "direct", overrides = {}) {
   const key = DEFAULTS[routeMode] ? routeMode : "direct";
   const base = DEFAULTS[key];
+  const profile = resolveRuntimeProfileConfig(overrides.providerSpecificData);
+  const profileStream = profile.stream || {};
   const streamOverrides = overrides.stream || {};
   const legacyFirstProductive = overrides.streamPreflightTimeoutMs ?? overrides.preflightTimeoutMs;
   const firstProductiveDefault = legacyFirstProductive ?? streamOverrides.firstProductiveTimeoutMs ?? base.stream.firstProductiveTimeoutMs;
   const stream = {
-    firstByteTimeoutMs: toMs(streamOverrides.firstByteTimeoutMs, base.stream.firstByteTimeoutMs),
-    firstProductiveTimeoutMs: adaptiveFirstProductiveTimeoutMs(key, toMs(firstProductiveDefault, base.stream.firstProductiveTimeoutMs), overrides.ttftStats),
-    idleAfterProductiveMs: toMs(streamOverrides.idleAfterProductiveMs, base.stream.idleAfterProductiveMs),
+    firstByteTimeoutMs: toMs(streamOverrides.firstByteTimeoutMs, profileStream.firstByteTimeoutMs ?? base.stream.firstByteTimeoutMs),
+    firstProductiveTimeoutMs: adaptiveFirstProductiveTimeoutMs(key, toMs(firstProductiveDefault, profileStream.firstProductiveTimeoutMs ?? base.stream.firstProductiveTimeoutMs), overrides.ttftStats),
+    idleAfterProductiveMs: toMs(streamOverrides.idleAfterProductiveMs, profileStream.idleAfterProductiveMs ?? base.stream.idleAfterProductiveMs),
     totalBudgetMs: toMs(streamOverrides.totalBudgetMs, base.stream.totalBudgetMs),
   };
 
@@ -98,5 +101,5 @@ export function resolveRoutePolicy(routeMode = "direct", overrides = {}) {
   if (overrides.retryAttempts != null) retry.attempts = Math.max(0, Math.min(Number.parseInt(overrides.retryAttempts, 10) || 0, 10));
   if (overrides.retryDelayMs != null) retry.delayMs = Math.max(0, Math.min(Number.parseInt(overrides.retryDelayMs, 10) || 0, 30000));
 
-  return { routeMode: key, stream, retry };
+  return { routeMode: key, stream, retry, heartbeat: profile.heartbeat || { enabled: false } };
 }

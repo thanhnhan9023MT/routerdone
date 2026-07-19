@@ -151,6 +151,10 @@ export async function PUT(request, { params }) {
         ...(providerSpecificData || {}),
       };
 
+      if (existing.providerSpecificData?.baseUrl && providerSpecificData?.baseUrl === "") {
+        updateData.providerSpecificData.baseUrl = existing.providerSpecificData.baseUrl;
+      }
+
       if (proxyConfig.hasAnyProxyField) {
         updateData.providerSpecificData.connectionProxyEnabled = proxyConfig.connectionProxyEnabled;
         updateData.providerSpecificData.connectionProxyUrl = proxyConfig.connectionProxyUrl;

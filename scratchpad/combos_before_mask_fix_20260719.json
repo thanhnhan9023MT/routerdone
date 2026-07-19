@@ -1,0 +1,14 @@
+[
+  {
+    "name": "claude-opus-4.8-v",
+    "kind": null,
+    "outputModel": null,
+    "models": "[\"euro/accounts/euromodels/models/claude-opus-4.8\", \"euro/accounts/euromodels/models/claude-fable-5\", \"euro/accounts/euromodels/models/glm-5.2\", \"euro/accounts/euromodels/models/gpt-5.6-terra\", \"cheat/claude-opus-4-8[1m]\"]"
+  },
+  {
+    "name": "gpt-5.6-luna",
+    "kind": null,
+    "outputModel": "gpt-5.6-luna",
+    "models": "[\"euro/accounts/euromodels/models/gpt-5.6-luna\", \"goci/cx/gpt-5.6-luna\", \"psh/xai/grok-4.5\"]"
+  }
+]

@@ -107,7 +107,7 @@ describe("CodexExecutor image handling", () => {
     expect(global.fetch).not.toHaveBeenCalled();
   });
 
-  it("falls back to original URL when remote fetch fails", async () => {
+  it("keeps the remote image when prefetch fails", async () => {
     global.fetch = vi.fn(async () => { throw new Error("network down"); });
 
     const executor = new CodexExecutor();

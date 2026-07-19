@@ -1,5 +1,12 @@
 import { ROLE, OPENAI_BLOCK, RESPONSES_ITEM } from "../schema/index.js";
 
+function normalizeImageReference(block) {
+  const raw = typeof block?.image_url === "string"
+    ? block.image_url
+    : block?.image_url?.url;
+  return typeof raw === "string" && raw.length > 0 ? raw : null;
+}
+
 /**
  * Normalize Responses API input to array format.
  * Accepts string or array, returns array of message items.
@@ -24,13 +31,15 @@ export function normalizeResponsesInput(input) {
 }
 
 export function toOpenAIContentBlock(block) {
-  if (block?.type === RESPONSES_ITEM.INPUT_TEXT) return { type: OPENAI_BLOCK.TEXT, text: block.text };
-  if (block?.type === RESPONSES_ITEM.OUTPUT_TEXT) return { type: OPENAI_BLOCK.TEXT, text: block.text };
-  if (block?.type === RESPONSES_ITEM.INPUT_IMAGE || Object.hasOwn(block || {}, "image_url")) {
-    const url = block.image_url || block.file_id || "";
-    return { type: OPENAI_BLOCK.IMAGE_URL, image_url: { url, detail: block.detail || "auto" } };
+  if (block?.type === RESPONSES_ITEM.INPUT_TEXT || block?.type === RESPONSES_ITEM.OUTPUT_TEXT) {
+    return { type: OPENAI_BLOCK.TEXT, text: block.text || "" };
   }
-  return block;
+  if (block?.type === RESPONSES_ITEM.INPUT_IMAGE || Object.hasOwn(block || {}, "image_url")) {
+    const url = normalizeImageReference(block);
+    if (!url) return { type: OPENAI_BLOCK.TEXT, text: "[image omitted: missing image reference]" };
+    return { type: OPENAI_BLOCK.IMAGE_URL, image_url: { url, detail: block.detail || block.image_url?.detail || "auto" } };
+  }
+  return { type: OPENAI_BLOCK.TEXT, text: typeof block?.text === "string" ? block.text : "[unsupported content omitted]" };
 }
 
 /**

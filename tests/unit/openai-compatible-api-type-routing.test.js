@@ -37,6 +37,18 @@ describe("OpenAI-compatible apiType routing", () => {
     expect(executor.buildUrl("gpt-5.5-xhigh", true, 0, creds)).toBe(`${baseUrl}/responses`);
   });
 
+  it("normalizes explicit LM Studio connection transport only", () => {
+    const creds = {
+      apiKey: "test-key",
+      providerSpecificData: { baseUrl: "http://127.0.0.1:1234", runtimeProfile: "lmstudio_local", apiType: "chat" },
+    };
+    const base = new BaseExecutor(responseIdProvider, {});
+    const executor = new DefaultExecutor(responseIdProvider);
+
+    expect(base.buildUrl("local-model", true, 0, creds)).toBe("http://127.0.0.1:1234/v1/chat/completions");
+    expect(executor.buildUrl("local-model", true, 0, creds)).toBe("http://127.0.0.1:1234/v1/chat/completions");
+  });
+
   it("falls back to provider id routing for legacy connections without apiType", () => {
     const creds = credentials(null);
     const base = new BaseExecutor(responseIdProvider, {});

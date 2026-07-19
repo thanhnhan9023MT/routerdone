@@ -20,21 +20,33 @@ Expected:
 ## 2. Brand Scan
 
 ```bash
-rg -n -i "biz100m|llmgateway|thoa100m|llm\.biz100m|gpt-5\.5\.fallback" --glob "!node_modules" --glob "!.next" .
-rg -n -i "upstream|upstream-router" --glob "!node_modules" --glob "!.next" --glob "!*.patch" --glob "!LICENSE" .
+git grep -n -i -E "biz100m|llmgateway|llm\.biz100m|gpt-5\.5\.fallback" -- \
+  ':!maintenance/routerdone-update/REBRAND_RULES.md' \
+  ':!maintenance/routerdone-update/VERIFY_CHECKLIST.md' \
+  ':!maintenance/routerdone-update/sync-routerdone-from-upstream.ps1'
+git grep -n -i -P "thoa100m(?!/routerdone(?:\\.git)?(?=$|[/#?[:space:]\\\">):,]))" -- \
+  ':!LICENSE' ':!.github/FUNDING.yml' ':!maintenance/routerdone-update/**'
 ```
 
 Expected:
-- Biz100M/thoa100m/llm.biz100m/gpt-5.5.fallback: 0 match (tru README scan example).
-- upstream/upstream-router: 0 match ngoai patch files + LICENSE.
+- Legacy/private brand va combo: 0 match ngoai cac file governance mo ta replacement.
+- Exact canonical repo slug `thoa100m/routerdone` duoc phep trong source, URL,
+  installer, updater va release commands.
+- `thoa100m` ngoai canonical slug chi duoc phep trong metadata allowlist
+  `LICENSE`, `.github/FUNDING.yml` va tai lieu governance.
 
 ## 3. Domain / IP / Tunnel Scan
 
 ```bash
-rg -n -i "biz100m\.com|llm\.biz100m|trycloudflare|\.tailscale" --glob "!node_modules" --glob "!.next" .
+git grep -n -i -E "biz100m\.com|llm\.biz100m" -- \
+  ':!maintenance/routerdone-update/REBRAND_RULES.md' \
+  ':!maintenance/routerdone-update/VERIFY_CHECKLIST.md' \
+  ':!maintenance/routerdone-update/sync-routerdone-from-upstream.ps1'
 ```
 
-Expected: 0 match.
+Expected: 0 match ngoai governance replacement rules. Cloudflare quick tunnels va
+Tailscale la tinh nang ket noi duoc ho tro, khong phai private-domain leak; cac URL
+cu the cua ca nhan van phai bi secret/domain review bat lai.
 
 ## 4. Patches Apply Check
 
@@ -122,7 +134,7 @@ Dokploy settings:
 Xac nhan khong co:
 - `.agents/` (Codekit)
 - `rules/` (release/patch gate)
-- `AGENTS.md` (thoa100m/llmGateway)
+- `AGENTS.md` (internal owner/repository/Codekit metadata)
 - `cloud/` (Cloudflare worker, hardcoded secret)
 - `skills/` (upstream-router CLI skills)
 - `tester/`, `task-bootstrap-cache-design.txt`, `gitbook/`, `images/`, `cli/`
@@ -130,16 +142,25 @@ Xac nhan khong co:
 
 ## 12. GitHub Release +1
 
-Sau khi verify pass va push len `main`, tao release patch +1:
+Sau khi verify pass va push len `main`, tao annotated tag patch +1:
 
 ```bash
-gh release list --repo thoa100m/routerdone --limit 1
-gh release create vX.Y.Z --repo thoa100m/routerdone --target main --title "RouterDone vX.Y.Z" --notes "Upstream upstream sync + RouterDone rebrand + verify green"
+git tag -a vX.Y.Z -m "RouterDone vX.Y.Z"
+git push origin vX.Y.Z
+gh release view vX.Y.Z --repo thoa100m/routerdone
+```
+
+Neu external automation chua tao release, tao tu tag da verify thay vi de `gh`
+tao lightweight tag:
+
+```bash
+gh release create vX.Y.Z --repo thoa100m/routerdone --verify-tag \
+  --title "RouterDone vX.Y.Z" --notes "RouterDone vX.Y.Z"
 gh release view vX.Y.Z --repo thoa100m/routerdone
 gh release list --repo thoa100m/routerdone --limit 3
 ```
 
 Expected:
-- Tag moi la patch +1 so voi Latest release truoc do.
-- Release tro vao `main`.
+- Tag moi la annotated tag va patch +1 so voi Latest release truoc do.
+- Tag va release cung tro vao release commit tren `main`.
 - Release moi hien la Latest.

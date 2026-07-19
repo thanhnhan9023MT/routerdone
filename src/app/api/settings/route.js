@@ -50,6 +50,74 @@ export async function PATCH(request) {
       body.consoleLogRetentionMs = value;
     }
 
+    if (Object.prototype.hasOwnProperty.call(body, "headroomAdaptive")) {
+      const cfg = body.headroomAdaptive;
+      const defaults = {
+        enabled: true,
+        softThresholdPercent: 70,
+        mandatoryThresholdPercent: 85,
+        compactThresholdPercent: 95,
+        softTimeoutMs: 1500,
+        mandatoryTimeoutMs: 3000,
+      };
+      if (!cfg || typeof cfg !== "object" || Array.isArray(cfg)) {
+        return NextResponse.json({ error: "Invalid Headroom adaptive settings" }, { status: 400 });
+      }
+      const next = { ...defaults, ...cfg };
+      const thresholds = [next.softThresholdPercent, next.mandatoryThresholdPercent, next.compactThresholdPercent].map(Number);
+      const timeouts = [next.softTimeoutMs, next.mandatoryTimeoutMs].map(Number);
+      if (typeof next.enabled !== "boolean"
+        || thresholds.some((value) => !Number.isSafeInteger(value) || value < 50 || value > 99)
+        || !(thresholds[0] < thresholds[1] && thresholds[1] < thresholds[2])
+        || timeouts.some((value) => !Number.isSafeInteger(value) || value < 500 || value > 5000)) {
+        return NextResponse.json({ error: "Invalid Headroom adaptive settings" }, { status: 400 });
+      }
+      body.headroomAdaptive = {
+        enabled: next.enabled,
+        softThresholdPercent: thresholds[0],
+        mandatoryThresholdPercent: thresholds[1],
+        compactThresholdPercent: thresholds[2],
+        softTimeoutMs: timeouts[0],
+        mandatoryTimeoutMs: timeouts[1],
+      };
+    }
+
+    if (Object.prototype.hasOwnProperty.call(body, "responsesCompactionEnabled") || Object.prototype.hasOwnProperty.call(body, "responsesCompactionThresholdTokens")) {
+      const enabled = body.responsesCompactionEnabled === true;
+      const threshold = Number(body.responsesCompactionThresholdTokens ?? 81000);
+      if (!Number.isSafeInteger(threshold) || threshold < 1 || threshold > 10000000) {
+        return NextResponse.json({ error: "Invalid Responses compaction settings" }, { status: 400 });
+      }
+      body.responsesCompactionEnabled = enabled;
+      body.responsesCompactionThresholdTokens = threshold;
+    }
+    if (Object.prototype.hasOwnProperty.call(body, "headroomCompressModel")) {
+      if (typeof body.headroomCompressModel !== "string" || body.headroomCompressModel.length > 200) {
+        return NextResponse.json({ error: "Invalid Headroom compression model" }, { status: 400 });
+      }
+      body.headroomCompressModel = body.headroomCompressModel.trim();
+    }
+
+    if (Object.prototype.hasOwnProperty.call(body, "routerDoneContextBackup")) {
+      const cfg = body.routerDoneContextBackup;
+      if (!cfg || typeof cfg !== "object" || Array.isArray(cfg)) {
+        return NextResponse.json({ error: "Invalid context backup settings" }, { status: 400 });
+      }
+      const threshold = Number(cfg.thresholdTokens ?? 45000);
+      const retain = Number(cfg.retainRecentTurns ?? 3);
+      if (typeof cfg.enabled !== "boolean" || !Number.isSafeInteger(threshold) || threshold < 36000 || !Number.isInteger(retain) || retain < 1 || retain > 6 || (cfg.codexConnectionId !== undefined && typeof cfg.codexConnectionId !== "string") || (cfg.compressModel !== undefined && (typeof cfg.compressModel !== "string" || cfg.compressModel.length > 200)) || (cfg.compressFallbackModel !== undefined && (typeof cfg.compressFallbackModel !== "string" || cfg.compressFallbackModel.length > 200))) {
+        return NextResponse.json({ error: "Invalid context backup settings" }, { status: 400 });
+      }
+      body.routerDoneContextBackup = {
+        enabled: cfg.enabled,
+        thresholdTokens: threshold,
+        retainRecentTurns: retain,
+        codexConnectionId: cfg.codexConnectionId || "",
+        compressModel: typeof cfg.compressModel === "string" ? cfg.compressModel.trim() : "",
+        compressFallbackModel: typeof cfg.compressFallbackModel === "string" ? cfg.compressFallbackModel.trim() : "",
+      };
+    }
+
     // If updating password, hash it
     if (body.newPassword) {
       const settings = await getSettings();

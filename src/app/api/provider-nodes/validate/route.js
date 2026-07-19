@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { assertPublicUrl } from "@/shared/utils/ssrfGuard.js";
 import { isLocalRequest } from "@/dashboardGuard";
+import { buildProviderEndpoint, normalizeProviderBaseUrl, normalizeRuntimeProfile } from "@/lib/providerTransport";
 
 // Fetch with timeout wrapper
 const fetchWithTimeout = (url, options, timeout = 10000) => {
@@ -56,20 +57,23 @@ export async function POST(request) {
   try {
     const body = await request.json();
     const { baseUrl, apiKey, type, modelId } = body;
+    const runtimeProfile = normalizeRuntimeProfile(body.runtimeProfile);
 
     if (!baseUrl || !apiKey) {
       return NextResponse.json({ error: "Base URL and API key required" }, { status: 400 });
     }
 
-    // Validate URL format
-    if (!isValidUrl(baseUrl)) {
-      return NextResponse.json({ error: "Invalid URL format" }, { status: 400 });
+    let normalizedBase;
+    try {
+      normalizedBase = normalizeProviderBaseUrl(baseUrl, { runtimeProfile, transport: type === "anthropic-compatible" ? "anthropic" : "openai" });
+    } catch (error) {
+      return NextResponse.json({ error: error.message || "Invalid URL format" }, { status: 400 });
     }
 
-    // SSRF guard for remote callers; local host keeps self-hosted nodes (e.g. ollama-local)
+    // SSRF guard for remote callers; local host keeps explicit self-hosted profiles (e.g. lmstudio_local)
     if (!isLocalRequest(request)) {
       try {
-        assertPublicUrl(baseUrl);
+        assertPublicUrl(normalizedBase);
       } catch {
         return NextResponse.json({ error: "URL not allowed" }, { status: 400 });
       }
@@ -77,11 +81,10 @@ export async function POST(request) {
 
     // Custom Embedding Validation - test POST /embeddings directly
     if (type === "custom-embedding") {
-      const normalizedBase = baseUrl.trim().replace(/\/$/, "");
       if (!modelId?.trim()) {
         return NextResponse.json({ valid: false, error: "Model ID required for embedding validation" });
       }
-      const embedRes = await fetchWithTimeout(`${normalizedBase}/embeddings`, {
+      const embedRes = await fetchWithTimeout(buildProviderEndpoint(normalizedBase, "/embeddings", { runtimeProfile }), {
         method: "POST",
         headers: {
           "Authorization": `Bearer ${apiKey}`,
@@ -107,12 +110,7 @@ export async function POST(request) {
 
     // Anthropic Compatible Validation
     if (type === "anthropic-compatible") {
-      let normalizedBase = baseUrl.trim().replace(/\/$/, "");
-      if (normalizedBase.endsWith("/messages")) {
-        normalizedBase = normalizedBase.slice(0, -9);
-      }
-
-      const modelsUrl = `${normalizedBase}/models`;
+      const modelsUrl = buildProviderEndpoint(normalizedBase, "/models", { transport: "anthropic" });
       const res = await fetchWithTimeout(modelsUrl, {
         method: "GET",
         headers: {
@@ -131,7 +129,7 @@ export async function POST(request) {
 
       // Fallback: try chat/completions if modelId provided
       if (modelId) {
-        const chatRes = await fetchWithTimeout(`${normalizedBase}/chat/completions`, {
+        const chatRes = await fetchWithTimeout(buildProviderEndpoint(normalizedBase, "/chat/completions", { transport: "anthropic" }), {
           method: "POST",
           headers: {
             "Authorization": `Bearer ${apiKey}`,
@@ -159,7 +157,7 @@ export async function POST(request) {
     }
 
     // OpenAI Compatible Validation (Default)
-    const modelsUrl = `${baseUrl.replace(/\/$/, "")}/models`;
+    const modelsUrl = buildProviderEndpoint(normalizedBase, "/models", { runtimeProfile });
     const res = await fetchWithTimeout(modelsUrl, {
       headers: { "Authorization": `Bearer ${apiKey}` },
     });
@@ -173,7 +171,7 @@ export async function POST(request) {
 
     // Fallback: try chat/completions if modelId provided
     if (modelId) {
-      const chatRes = await fetchWithTimeout(`${baseUrl.replace(/\/$/, "")}/chat/completions`, {
+      const chatRes = await fetchWithTimeout(buildProviderEndpoint(normalizedBase, "/chat/completions", { runtimeProfile }), {
         method: "POST",
         headers: {
           "Authorization": `Bearer ${apiKey}`,

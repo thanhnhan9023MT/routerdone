@@ -1,0 +1,38 @@
+[
+  {
+    "name": "claude-fable-5",
+    "visionModel": "kimi-k2.7-vision"
+  },
+  {
+    "name": "claude-opus-4-6",
+    "visionModel": "kimi-k2.7-vision"
+  },
+  {
+    "name": "claude-opus-4-7",
+    "visionModel": "kimi-k2.7-vision"
+  },
+  {
+    "name": "claude-opus-4-8",
+    "visionModel": "kimi-k2.7-vision"
+  },
+  {
+    "name": "claude-opus-4-8-kr",
+    "visionModel": "kimi-k2.7-vision"
+  },
+  {
+    "name": "claude-opus-4-8-ln",
+    "visionModel": "kimi-k2.7-vision"
+  },
+  {
+    "name": "claude-opus-4-8-vip",
+    "visionModel": "kimi-k2.7-vision"
+  },
+  {
+    "name": "claude-sonnet-4-6",
+    "visionModel": "kimi-k2.7-vision"
+  },
+  {
+    "name": "claude-sonnet-5",
+    "visionModel": "kimi-k2.7-vision"
+  }
+]

@@ -16,7 +16,7 @@ xoa domain/secret/combo ca nhan, neutralize default.
 | `Biz100M` | `RouterDone` | Con lai |
 | `llmGateway` | `routerdone` | Repo name |
 | `llmgateway` | `routerdone` | Repo name |
-| `thoa100m` | `routerdone` | Owner name |
+| `thoa100m` | `routerdone` | Chi thay owner legacy ngoai exact repo slug `thoa100m/routerdone` |
 | `upstream` | `RouterDone` | Upstream brand -> RouterDone |
 | `upstream-router` | `routerdone` | Upstream brand lowercase |
 | `gpt-5.5.fallback` | `helper.fallback` | Combo ca nhan -> trung tinh |
@@ -38,6 +38,9 @@ xuat hien trong added lines, khong trong upstream context).
 - `decolua/upstream-router` trong Dockerfile/pom reference: la upstream dep,
   khong phai brand ca nhan. Co the thay bang URL repo RouterDone moi
   neu muon, nhung khong bat buoc.
+- Exact canonical repo slug `thoa100m/routerdone` va cac GitHub/raw/release URL
+  dua tren slug nay. `thoa100m` khong duoc dung lam product/display brand.
+- `.github/FUNDING.yml` va `LICENSE` duoc giu owner/attribution metadata hien co.
 
 ## Secret Neutralization
 
@@ -53,8 +56,12 @@ xuat hien trong added lines, khong trong upstream context).
 ## Verify sau rebrand
 
 ```bash
-rg -n -i "biz100m|llmgateway|thoa100m|llm\.biz100m|gpt-5\.5\.fallback" .
-# Expected: chi match trong README (vi du scan regex)
-rg -n -i "upstream|upstream-router" --glob '!*.patch' --glob '!LICENSE' .
-# Expected: 0 match (da rebrand het)
+git grep -n -i -E "biz100m|llmgateway|llm\.biz100m|gpt-5\.5\.fallback" -- \
+  ':!maintenance/routerdone-update/REBRAND_RULES.md' \
+  ':!maintenance/routerdone-update/VERIFY_CHECKLIST.md' \
+  ':!maintenance/routerdone-update/sync-routerdone-from-upstream.ps1'
+# Expected: 0 match.
+git grep -n -i -P "thoa100m(?!/routerdone(?:\\.git)?(?=$|[/#?[:space:]\\\">):,]))" -- \
+  ':!LICENSE' ':!.github/FUNDING.yml' ':!maintenance/routerdone-update/**'
+# Expected: 0 match. Exact thoa100m/routerdone va metadata allowlist duoc phep.
 ```

@@ -57,6 +57,11 @@ export async function POST(request) {
         apiType,
         baseUrl: (baseUrl || OPENAI_COMPATIBLE_DEFAULTS.baseUrl).trim(),
         name: name.trim(),
+        data: {
+          ...(body.data && typeof body.data === "object" ? body.data : {}),
+          runtimeProfile: body.runtimeProfile === "lmstudio_local" ? "lmstudio_local" : "standard",
+          ...(body.transport && typeof body.transport === "object" ? { transport: body.transport } : {}),
+        },
       });
       return NextResponse.json({ node }, { status: 201 });
     }

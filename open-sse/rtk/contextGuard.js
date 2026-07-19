@@ -55,6 +55,14 @@ function canTrimItem(item) {
   return role !== "system" && role !== "developer";
 }
 
+function isImageMediaObject(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const type = String(value.type || "").toLowerCase();
+  if (type === "image" || type === "image_url" || type === "input_image" || type === "output_image") return true;
+  const mime = value.mimeType || value.mime_type || value.media_type;
+  return typeof mime === "string" && mime.toLowerCase().startsWith("image/");
+}
+
 function trimStringLeaves(value, budget, seen = new WeakSet()) {
   if (budget.saved >= budget.need) return value;
   if (typeof value === "string") {
@@ -66,7 +74,7 @@ function trimStringLeaves(value, budget, seen = new WeakSet()) {
     budget.trimmedStrings++;
     return next;
   }
-  if (!value || typeof value !== "object") return value;
+  if (!value || typeof value !== "object" || isImageMediaObject(value)) return value;
   if (seen.has(value)) return value;
   seen.add(value);
   if (Array.isArray(value)) {
@@ -77,7 +85,7 @@ function trimStringLeaves(value, budget, seen = new WeakSet()) {
   }
   for (const key of Object.keys(value)) {
     if (budget.saved >= budget.need) break;
-    if (key === "id" || key === "role" || key === "type" || key === "name" || key === "call_id" || key === "tool_call_id" || key === "image_url" || key === "url") continue;
+    if (key === "id" || key === "role" || key === "type" || key === "name" || key === "call_id" || key === "tool_call_id" || key === "image_url" || key === "url" || key === "images") continue;
     value[key] = trimStringLeaves(value[key], budget, seen);
   }
   return value;

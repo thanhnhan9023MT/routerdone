@@ -1,5 +1,7 @@
 import { EventEmitter } from "events";
 import { CONSOLE_LOG_CONFIG } from "@/shared/constants/config.js";
+// Static import so Next.js standalone build includes errorLogsRepo
+import { saveErrorLog } from "@/lib/db/repos/errorLogsRepo.js";
 
 const consoleLevels = ["log", "info", "warn", "error", "debug"];
 const DEFAULT_RETENTION_MS = CONSOLE_LOG_CONFIG.defaultRetentionMs;
@@ -99,6 +101,11 @@ function ensurePruneTimer() {
   if (typeof state.pruneTimer.unref === "function") state.pruneTimer.unref();
 }
 
+// Persist error/warn logs to SQLite so they survive container restarts
+function persistError(level, line) {
+  saveErrorLog({ level, message: line }).catch(() => {});
+}
+
 export function initConsoleLogCapture() {
   ensurePruneTimer();
   if (state.patched) return;
@@ -106,8 +113,13 @@ export function initConsoleLogCapture() {
   for (const level of consoleLevels) {
     state.originals[level] = console[level];
     console[level] = (...args) => {
-      appendLine(toLogLine(level, args));
+      const line = toLogLine(level, args);
+      appendLine(line);
       state.originals[level](...args);
+      // Persist errors and warnings to database
+      if (level === "error" || level === "warn") {
+        persistError(level, line);
+      }
     };
   }
 
