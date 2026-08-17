@@ -97,11 +97,14 @@ export async function createCombo(data) {
     createdAt: now,
     updatedAt: now,
   };
+  // rowToCombo exposes stripReasoning as a boolean, so GET/PUT already return one.
+  // Hand the caller the same shape instead of the raw 0/1 that goes to SQLite.
+  const returned = { ...combo, stripReasoning: !!combo.stripReasoning };
   db.run(
     `INSERT INTO combos(id, name, kind, models, reasoningTimeoutMs, visionModel, pdfModel, nodeTimeouts, outputModel, stripReasoning, createdAt, updatedAt) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [combo.id, combo.name, combo.kind, stringifyJson(combo.models), combo.reasoningTimeoutMs, combo.visionModel, combo.pdfModel, combo.nodeTimeouts ? stringifyJson(combo.nodeTimeouts) : null, combo.outputModel, combo.stripReasoning, combo.createdAt, combo.updatedAt]
   );
-  return combo;
+  return returned;
 }
 
 export async function updateCombo(id, data) {

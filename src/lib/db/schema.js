@@ -105,6 +105,16 @@ export const TABLES = {
       // entry gets that firstByte+firstProductive budget (bypassing the reasoning gate).
       // NULL → nodes use combo/global default. Auto-added by syncSchemaFromTables (nullable).
       nodeTimeouts: "TEXT",
+      // The model name this combo reports back to the client, so one model can be served
+      // under another's name (e.g. a claude-fable-5 combo answered by claude-opus-5).
+      // NULL → report the upstream's own id, which leaks it (e.g. "ohh/opus-5").
+      // Present in long-lived databases but never declared here, so a FRESH database had
+      // no such column and every combo write failed with "no such column" — the columns
+      // were read by rowToCombo and written by nobody until 2026-08-17.
+      outputModel: "TEXT",
+      // Drop reasoning/thinking blocks from this combo's output. Stored 0/1, exposed as
+      // boolean by rowToCombo.
+      stripReasoning: "INTEGER",
       createdAt: "TEXT NOT NULL",
       updatedAt: "TEXT NOT NULL",
     },
