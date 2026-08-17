@@ -1,4 +1,4 @@
-import { HTTP_STATUS, RETRY_CONFIG, DEFAULT_RETRY_CONFIG, resolveRetryEntry, FETCH_CONNECT_TIMEOUT_MS, shouldForceNonStreamUpstream, FORCE_NONSTREAM_CONNECT_TIMEOUT_MS } from "../config/runtimeConfig.js";
+import { HTTP_STATUS, RETRY_CONFIG, DEFAULT_RETRY_CONFIG, resolveRetryEntry, FETCH_CONNECT_TIMEOUT_MS, shouldForceNonStreamUpstream, FORCE_NONSTREAM_CONNECT_TIMEOUT_MS, connectTimeoutForHost } from "../config/runtimeConfig.js";
 import { shouldRefreshCredentials } from "../services/oauthCredentialManager.js";
 import { proxyAwareFetch } from "../utils/proxyFetch.js";
 import { dbg } from "../utils/debugLog.js";
@@ -178,10 +178,19 @@ export class BaseExecutor {
 
       // Abort if upstream doesn't return response headers within connection timeout.
       // Non-stream upstreams only return headers once generation completes → longer cap.
+      //
+      // A host rule (runtimeConfig.connectTimeoutForHost) wins over the global deadline
+      // for upstreams that are known to withhold headers until generation starts — the
+      // global value stays tight so failover away from a genuinely hung upstream is fast,
+      // instead of being raised for everyone. Dynamic provider nodes cannot carry
+      // `config.timeoutMs` at all: DefaultExecutor resolves config as
+      // `PROVIDERS[provider] || PROVIDERS.openai`, and a compatible node's UUID id has no
+      // PROVIDERS entry, so it always fell through to the global constant.
       const connectCtrl = new AbortController();
+      const hostConnectTimeoutMs = connectTimeoutForHost(url);
       const timeoutMs = forceNonStream
-        ? Math.max(this.config?.timeoutMs || 0, FORCE_NONSTREAM_CONNECT_TIMEOUT_MS)
-        : (this.config?.timeoutMs || FETCH_CONNECT_TIMEOUT_MS);
+        ? Math.max(this.config?.timeoutMs || 0, hostConnectTimeoutMs || 0, FORCE_NONSTREAM_CONNECT_TIMEOUT_MS)
+        : (hostConnectTimeoutMs || this.config?.timeoutMs || FETCH_CONNECT_TIMEOUT_MS);
       const connectTimer = setTimeout(() => connectCtrl.abort(new Error("fetch connect timeout")), timeoutMs);
       const mergedSignal = signal ? AbortSignal.any([signal, connectCtrl.signal]) : connectCtrl.signal;
 

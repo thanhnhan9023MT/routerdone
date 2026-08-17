@@ -1,3 +1,5 @@
+import { hostOf } from "../utils/upstreamHost.js";
+
 // HTTP status codes
 export const HTTP_STATUS = {
   BAD_REQUEST: 400,
@@ -79,6 +81,39 @@ export const FUSION_STREAM_TOTAL_BUDGET_MS = envMs("FUSION_STREAM_TOTAL_BUDGET_M
 
 // Fetch connect timeout: abort if upstream doesn't return response headers within this duration
 export const FETCH_CONNECT_TIMEOUT_MS = envMs("FETCH_CONNECT_TIMEOUT_MS", 60 * 1000);
+
+// Per-UPSTREAM-HOST override for the deadline above.
+//
+// The global value is deliberately tight (prod sets FETCH_CONNECT_TIMEOUT_MS=30000 via
+// runtime_config) because it is what makes failover away from a hung upstream fast. But
+// some upstreams do not send response headers until generation has actually started, so
+// a tight global deadline kills healthy requests instead of hung ones.
+//
+// Measured 2026-08-17 on integrate.api.nvidia.com / z-ai/glm-5.2, timing when the fetch
+// promise resolves (i.e. when HEADERS arrive), not first body byte:
+//   stream:true  → headers after 28.9s
+//   stream:false → headers after 41.9s
+// Against a 30s deadline that is a coin flip: sequential calls sometimes returned 200
+// and sometimes `fetch connect timeout` → 502, with concurrency NOT the driver (TTFB at
+// 5 parallel averaged 41.2s vs 37.9s at 30 parallel).
+//
+// Keyed by HOST, not by provider-node id: a node id is a random UUID minted at creation,
+// so a per-id rule dies silently the moment the node is recreated — measured the same day
+// with the ohhmyagent max_tokens floor. Host rules survive that, and cover every
+// connection on the node without touching 38 stored providerSpecificData snapshots.
+const CONNECT_TIMEOUT_HOSTS = [
+  // NVIDIA NIM withholds headers ~29-42s on reasoning models. 120s leaves headroom over
+  // the worst measured value without being an open-ended wait.
+  { host: /(^|\.)api\.nvidia\.com$/i, ms: 120 * 1000 },
+];
+
+// Resolve the connect deadline for one request URL. Returns null when no host rule
+// applies, so callers keep their existing precedence (provider config, then global).
+export function connectTimeoutForHost(requestUrl) {
+  const host = hostOf(requestUrl);
+  if (!host) return null;
+  return CONNECT_TIMEOUT_HOSTS.find((r) => r.host.test(host))?.ms ?? null;
+}
 
 // Default token limits
 export const DEFAULT_MAX_TOKENS = 64000;
