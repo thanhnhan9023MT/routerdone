@@ -50,6 +50,35 @@ export async function PATCH(request) {
       body.consoleLogRetentionMs = value;
     }
 
+    // Vision Bridge (Tools tab) — validate the 4 settings surfaced in the UI.
+    // Only free-tier vision models are allowed so the toggle can't be used to
+    // route vision spend through paid Claude/Gemini/GPT endpoints.
+    if (Object.prototype.hasOwnProperty.call(body, "visionPreprocessingEnabled")) {
+      body.visionPreprocessingEnabled = body.visionPreprocessingEnabled === true;
+    }
+    if (Object.prototype.hasOwnProperty.call(body, "visionPreprocessingModel")) {
+      const allowedVisionModels = [
+        "combo:vision",
+        "oc/mimo-v2.5-free",
+        "oc/deepseek-v4-flash-free",
+        "oc/glm-5.2",
+      ];
+      if (!allowedVisionModels.includes(body.visionPreprocessingModel)) {
+        return NextResponse.json({ error: "Vision model must be a free-tier model" }, { status: 400 });
+      }
+    }
+    if (Object.prototype.hasOwnProperty.call(body, "visionMaxTokens")) {
+      const allowedBudgets = [1024, 2048, 4096];
+      const budget = Number(body.visionMaxTokens);
+      if (!allowedBudgets.includes(budget)) {
+        return NextResponse.json({ error: "Invalid vision max tokens (allowed: 1024, 2048, 4096)" }, { status: 400 });
+      }
+      body.visionMaxTokens = budget;
+    }
+    if (Object.prototype.hasOwnProperty.call(body, "visionUiUxOverride")) {
+      body.visionUiUxOverride = body.visionUiUxOverride === true;
+    }
+
     if (Object.prototype.hasOwnProperty.call(body, "headroomAdaptive")) {
       const cfg = body.headroomAdaptive;
       const defaults = {
@@ -184,6 +213,14 @@ export async function PATCH(request) {
 
     if (Object.prototype.hasOwnProperty.call(body, "consoleLogRetentionMs")) {
       setConsoleLogRetentionMs(settings.consoleLogRetentionMs);
+    }
+
+    // Apply errorFix overrides immediately (self-heal / cooldown / ban thresholds)
+    if (Object.prototype.hasOwnProperty.call(body, "errorFix")) {
+      try {
+        const { setErrorFixConfig } = await import("open-sse/config/errorConfig.js");
+        setErrorFixConfig(settings.errorFix || null);
+      } catch { /* errorFix hot-reload is best-effort */ }
     }
 
     const { password, ...safeSettings } = settings;

@@ -6,6 +6,12 @@ services:
       args:
         NODE_IMAGE: ${NODE_IMAGE:-node:22-alpine}
     restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          cpus: "0.5"
+          memory: 512M
+    stop_grace_period: 30s
     environment:
       JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET}
       INITIAL_PASSWORD: ${INITIAL_PASSWORD:?set INITIAL_PASSWORD}

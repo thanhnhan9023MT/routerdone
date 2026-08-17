@@ -4,7 +4,7 @@ import { HTTP_STATUS } from "../../config/runtimeConfig.js";
 import { FORMATS } from "../../translator/formats.js";
 import { PROVIDERS } from "../../config/providers.js";
 import { openaiChatToClaudeMessage } from "../../translator/response/openai-chat-to-claude-message.js";
-import { buildRequestDetail, extractRequestConfig, saveUsageStats } from "./requestDetail.js";
+import { buildRequestDetail, extractRequestConfig, logChatRequestComplete, saveUsageStats } from "./requestDetail.js";
 
 // Responses-API providers (e.g. codex) may emit SSE without content-type + use Responses output shape
 const isResponsesProvider = (p) => PROVIDERS[p]?.format === FORMATS.OPENAI_RESPONSES;
@@ -111,11 +111,30 @@ function hasProductiveJsonResponse(body) {
   const msg = choice?.message || choice?.delta || {};
   if (typeof msg.content === "string" && msg.content.length > 0) return true;
   if (typeof msg.reasoning_content === "string" && msg.reasoning_content.length > 0) return true;
+  // Some providers (e.g. opencode.ai) return reasoning text in `reasoning` instead of `reasoning_content`
+  if (typeof msg.reasoning === "string" && msg.reasoning.length > 0) return true;
   if (Array.isArray(msg.tool_calls) && msg.tool_calls.length > 0) return true;
   if (Array.isArray(body.output)) {
     return body.output.some((o) => o?.type === "function_call" || (Array.isArray(o.content) && o.content.some((c) => typeof c?.text === "string" && c.text.length > 0)));
   }
-  return false;
+  // If the response has valid structure (choices with message object),
+  // consider it productive even if content fields are empty.
+  // Reasoning models may consume all tokens for internal thinking.
+  return !!choice;
+}
+
+/**
+ * Re-wrap already-read SSE text as a ReadableStream so the Responses-API
+ * stream converter can consume it (we read the body once for shape detection).
+ */
+function sseTextToStream(text) {
+  const bytes = new TextEncoder().encode(String(text || ""));
+  return new ReadableStream({
+    start(controller) {
+      controller.enqueue(bytes);
+      controller.close();
+    }
+  });
 }
 
 /**
@@ -135,11 +154,27 @@ export async function handleForcedSSEToJson({ providerResponse, sourceFormat, pr
     providerRequest: finalBody || translatedBody || null
   };
 
+  // Read the SSE body once so we can both shape-detect and parse it without
+  // consuming the response stream twice.
+  let sseText;
+  try {
+    sseText = await providerResponse.text();
+  } catch (err) {
+    console.error("[ChatCore] Failed to read forced-SSE body:", err);
+    return createErrorResult(HTTP_STATUS.BAD_GATEWAY, "Failed to read streaming response");
+  }
+
+  // Detect Responses-API SSE shape from the actual payload, not just provider config.
+  // Some OpenAI-compatible upstreams (e.g. grok via VietAPI) emit Responses events
+  // (response.created / response.output_item.*) even without a Responses content-type,
+  // which the Chat Completions parser cannot read -> false "Empty upstream stream" 502.
+  const looksLikeResponsesSSE = /(?:^|\n)event:\s*response\.|"type"\s*:\s*"response\./.test(sseText.slice(0, 800));
+
   // Codex/Responses API SSE path
-  const isCodexResponsesApi = isResponsesProvider(provider) || sourceFormat === FORMATS.OPENAI_RESPONSES;
+  const isCodexResponsesApi = isResponsesProvider(provider) || sourceFormat === FORMATS.OPENAI_RESPONSES || looksLikeResponsesSSE;
   if (isCodexResponsesApi) {
     try {
-      const jsonResponse = await convertResponsesStreamToJson(providerResponse.body);
+      const jsonResponse = await convertResponsesStreamToJson(sseTextToStream(sseText));
       if (!hasProductiveJsonResponse(jsonResponse)) return createErrorResult(HTTP_STATUS.BAD_GATEWAY, "Empty upstream stream before content");
       if (onRequestSuccess) await onRequestSuccess();
 
@@ -149,11 +184,14 @@ export async function handleForcedSSEToJson({ providerResponse, sourceFormat, pr
 
       const { msgItem, textContent } = pickAssistantMessageForChatCompletion(jsonResponse.output);
       const totalLatency = Date.now() - requestStartTime;
+      const latency = { ttft: totalLatency, total: totalLatency };
+      const normalizedUsage = { prompt_tokens: usage.input_tokens || 0, completion_tokens: usage.output_tokens || 0 };
+      logChatRequestComplete({ status: providerResponse.status, stream: false, provider, model, latency, tokens: normalizedUsage, routeInfo });
 
       saveRequestDetail(buildRequestDetail({
         ...ctx,
-        latency: { ttft: totalLatency, total: totalLatency },
-        tokens: { prompt_tokens: usage.input_tokens || 0, completion_tokens: usage.output_tokens || 0 },
+        latency,
+        tokens: normalizedUsage,
         response: { content: textContent, thinking: null, finish_reason: jsonResponse.status || "unknown" },
         status: "success"
       }, { endpoint: clientRawRequest?.endpoint || null })).catch(() => {});
@@ -211,9 +249,8 @@ export async function handleForcedSSEToJson({ providerResponse, sourceFormat, pr
     }
   }
 
-  // Standard Chat Completions SSE path
+  // Standard Chat Completions SSE path (sseText already read above)
   try {
-    const sseText = await providerResponse.text();
     const parsed = parseSSEToOpenAIResponse(sseText, model);
     if (!parsed) return createErrorResult(HTTP_STATUS.BAD_GATEWAY, "Invalid SSE response for non-streaming request");
 
@@ -225,9 +262,11 @@ export async function handleForcedSSEToJson({ providerResponse, sourceFormat, pr
     saveUsageStats({ provider, model, tokens: usage, connectionId, apiKey, endpoint: clientRawRequest?.endpoint, routeInfo });
 
     const totalLatency = Date.now() - requestStartTime;
+    const latency = { ttft: totalLatency, total: totalLatency };
+    logChatRequestComplete({ status: providerResponse.status, stream: false, provider, model, latency, tokens: usage, routeInfo });
     saveRequestDetail(buildRequestDetail({
       ...ctx,
-      latency: { ttft: totalLatency, total: totalLatency },
+      latency,
       tokens: usage,
       response: {
         content: parsed.choices?.[0]?.message?.content || null,

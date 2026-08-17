@@ -51,9 +51,13 @@ describe("fusion combo", () => {
     expect(seen.slice(0, 3).sort()).toEqual(["p/a", "p/b", "p/c"]);
     expect(seen[3]).toBe("p/judge");
 
-    // Panel calls are non-streaming with tools stripped.
+    // Panel calls STREAM with tools stripped. upstream v0.5.16x đổi panel sang
+    // stream:true để prompt panel nặng ra byte sớm thay vì timeout như non-stream;
+    // response được readPanelResponseJSON chuẩn hoá về JSON trước extractPanelText.
+    // Đi kèm: withTimeout phải cancel thân response của loser, nếu không slot
+    // concurrency của member đó bị giữ tới lần quét rò (xem services/combo.js).
     for (const [body, model, routeInfo] of handleSingleModel.mock.calls.filter(([, m]) => m !== "p/judge")) {
-      expect(body.stream).toBe(false);
+      expect(body.stream).toBe(true);
       expect(body.tools).toBeUndefined();
       expect(routeInfo?.isPanel).toBe(true);
     }

@@ -7,7 +7,7 @@ import { PROVIDERS } from "../../config/providers.js";
 import { HTTP_STATUS, PREFLIGHT_TICK_MS, PREFLIGHT_NO_BYTE_CAP_MS, PREFLIGHT_NO_CONTENT_CAP_MS } from "../../config/runtimeConfig.js";
 import { buildAbortedResponsesTerminalBytes } from "../../utils/responsesStreamHelpers.js";
 import { createErrorResult } from "../../utils/error.js";
-import { buildRequestDetail, extractRequestConfig, saveUsageStats } from "./requestDetail.js";
+import { buildRequestDetail, extractRequestConfig, logChatRequestComplete, saveUsageStats } from "./requestDetail.js";
 import { saveRequestDetail } from "@/lib/usageDb.js";
 import { SSE_HEADERS_CORS as SSE_HEADERS } from "../../utils/sseConstants.js";
 
@@ -364,6 +364,7 @@ export function buildOnStreamComplete({ provider, model, connectionId, apiKey, r
     };
     const safeContent = contentObj?.content || "[Empty streaming response]";
     const safeThinking = contentObj?.thinking || null;
+    logChatRequestComplete({ status: 200, stream, provider, model, latency, tokens: usage, routeInfo });
     saveRequestDetail(buildRequestDetail({
       provider, model, connectionId, apiKey, routeInfo,
       latency,

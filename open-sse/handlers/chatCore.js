@@ -24,7 +24,7 @@ import { dedupeTools } from "../utils/toolDeduper.js";
 import { injectCaveman } from "../rtk/caveman.js";
 import { injectPonytail } from "../rtk/ponytail.js";
 import { compressMessages, formatRtkLog } from "../rtk/index.js";
-import { guardContext, formatContextGuardLog, estimateInputTokens, pruneContextToHardCap, formatHardCapPruneLog } from "../rtk/contextGuard.js";
+import { guardContext, formatContextGuardLog, estimateInputTokens, pruneContextToHardCap, formatHardCapPruneLog, sanitizeTrimmedMediaBlocks } from "../rtk/contextGuard.js";
 import { compressWithHeadroom, formatHeadroomSizeLog, isHeadroomPhantomSavings, resolveHeadroomDecision } from "../rtk/headroom.js";
 import { getCapabilitiesForModel } from "../providers/capabilities.js";
 import { stripUnsupportedModalities } from "../translator/concerns/modality.js";
@@ -32,6 +32,19 @@ import { prefetchRemoteImages } from "../translator/concerns/prefetch.js";
 
 const DEFAULT_CONTEXT_GUARD_SOFT_TOKENS = Math.max(1, Number(process.env.CONTEXT_GUARD_SOFT_TOKENS) || 60000);
 const DEFAULT_CONTEXT_GUARD_KEEP_RECENT = Math.max(1, Number(process.env.CONTEXT_GUARD_KEEP_RECENT) || 3);
+
+// Verbose per-request diagnostics (RTK/CTX-GUARD/HEADROOM lines, thinking
+// injection, hard-cap prune). These fire on every request and were a major
+// CPU/IO contributor on loaded deploys because each console.log is also
+// captured by consoleLogBuffer for the dashboard. Keep them only when the
+// operator explicitly opts in: LOG_LEVEL=DEBUG|INFO, or dev (non-production).
+// ERROR lines below are intentionally NOT gated.
+const VERBOSE_LOGS = (() => {
+  const lvl = (process.env.LOG_LEVEL || "").toUpperCase();
+  if (lvl === "DEBUG" || lvl === "INFO") return true;
+  if (process.env.NODE_ENV === "production") return false;
+  return true;
+})();
 
 /**
  * Core chat handler - shared between SSE and Worker
@@ -70,7 +83,7 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   if (providerThinking?.mode && providerThinking.mode !== "auto") {
     const mode = providerThinking.mode;
     if (mode === "on" && !body.thinking) {
-      console.log("Injecting provider-level thinking config override: on");
+      if (VERBOSE_LOGS) console.log("Injecting provider-level thinking config override: on");
       body = { ...body, thinking: { type: "enabled", budget_tokens: 10000 } };
     } else if (mode === "off" && !body.thinking) {
       body = { ...body, thinking: { type: "disabled" } };
@@ -193,7 +206,7 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   // RTK: compress tool_result content
   const rtkStats = compressMessages(translatedBody, rtkEnabled);
   const rtkLine = formatRtkLog(rtkStats);
-  if (rtkLine) console.log(rtkLine);
+  if (rtkLine && VERBOSE_LOGS) console.log(rtkLine);
 
   // Context guard: evict old reasoning encrypted_content blobs before the
   // request reaches the model hard cap. User settings can lower the threshold,
@@ -216,7 +229,7 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
     isCompact,
   });
   const ctxGuardLine = formatContextGuardLog(ctxGuardStats);
-  if (ctxGuardLine) console.log(ctxGuardLine);
+  if (ctxGuardLine && VERBOSE_LOGS) console.log(ctxGuardLine);
 
   // Headroom: adaptive external compression; small requests bypass the extra network hop.
   const headroomDiagnostics = {};
@@ -240,6 +253,15 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   }
   if (isHeadroomPhantomSavings(headroomStats, headroomDiagnostics)) {
     log?.warn?.("HEADROOM", "reported token delta, but outbound JSON shrank <5%; provider may bill near-original payload");
+  }
+
+  // Recovery for histories already pruned by older RouterDone builds. Those
+  // builds could trim inside image/audio data URLs, leaving invalid media blocks
+  // that upstream token counters reject (e.g. VietAPI count_token_failed).
+  const mediaSanitizeStats = sanitizeTrimmedMediaBlocks(translatedBody);
+  if (mediaSanitizeStats) {
+    const savedKB = Math.round(mediaSanitizeStats.savedBytes / 1024);
+    console.log(`[CTX-GUARD] sanitized ${mediaSanitizeStats.sanitizedMediaBlocks} trimmed media blocks (${savedKB}KB)`);
   }
 
   // Input size verification: estimate input tokens after all token savers.
@@ -267,11 +289,12 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
         model: upstreamModel,
       });
       const pruneLine = formatHardCapPruneLog(pruneStats);
-      if (pruneLine) console.log(pruneLine);
+      // guard VERBOSE_LOGS: lấy từ upstream v0.5.16x để bớt log ở đường nóng
+      if (pruneLine && VERBOSE_LOGS) console.log(pruneLine);
       estInputTokens = estimateInputTokens(translatedBody, upstreamModel);
     }
   }
-  console.log(`[CTX-GUARD] input ~${estInputTokens} tokens | cap ${hardCapTokens} (ctx ${modelCtxWindow})${isCompact ? " | compact" : ""}`);
+  if (VERBOSE_LOGS) console.log(`[CTX-GUARD] input ~${estInputTokens} tokens | cap ${hardCapTokens} (ctx ${modelCtxWindow})${isCompact ? " | compact" : ""}`);
   if (estInputTokens > hardCapTokens && !isCompact) {
     log?.warn?.("CTX-GUARD", `input ${estInputTokens} tokens exceeds hard cap ${hardCapTokens} after pruning`);
     return createErrorResult(HTTP_STATUS.BAD_REQUEST, `context_too_large: estimated ${estInputTokens} input tokens exceed the ${hardCapTokens} hard cap for ${upstreamModel}. Reduce conversation context (run /compact) before continuing.`);

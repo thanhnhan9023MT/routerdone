@@ -123,6 +123,21 @@ const connCache = global._connectionMapCache;
 
 export const statsEmitter = global._statsEmitter;
 
+export async function pruneUsageHistory({ olderThanMs = 7 * 86400000, batchSize = 500 } = {}) {
+  const db = await getAdapter();
+  const cutoff = new Date(Date.now() - olderThanMs).toISOString();
+  let deleted = 0;
+  do {
+    const result = db.run(
+      `DELETE FROM usageHistory WHERE id IN (SELECT id FROM usageHistory WHERE timestamp < ? ORDER BY id ASC LIMIT ?)`,
+      [cutoff, Math.max(1, Math.min(2000, batchSize))]
+    );
+    deleted = result?.changes || 0;
+    if (deleted < Math.max(1, Math.min(2000, batchSize))) break;
+  } while (deleted > 0);
+  return deleted;
+}
+
 function getLocalDateKey(timestamp) {
   return getUsageDateKey(timestamp ? new Date(timestamp).getTime() : Date.now());
 }
@@ -341,8 +356,14 @@ export function trackPendingRequest(model, provider, connectionId, started, erro
     lastErrorProvider.ts = Date.now();
   }
 
-  const t = new Date().toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
-  console.log(`[${t}] [PENDING] ${started ? "START" : "END"}${error ? " (ERROR)" : ""} | provider=${provider} | model=${model}`);
+  // Per-attempt PENDING log is verbose (fires on every combo retry attempt,
+  // up to models×retries per user request) and was a top CPU/IO contributor
+  // on loaded deploys. Gate behind ENABLE_REQUEST_LOGS so production stays
+  // quiet by default; enable explicitly when diagnosing routing.
+  if (process.env.ENABLE_REQUEST_LOGS === "true") {
+    const t = new Date().toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
+    console.log(`[${t}] [PENDING] ${started ? "START" : "END"}${error ? " (ERROR)" : ""} | provider=${provider} | model=${model}`);
+  }
   statsEmitter.emit("pending");
 }
 

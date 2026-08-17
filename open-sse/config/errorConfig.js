@@ -61,10 +61,23 @@ export const BUSY_CONNECTION_COOLDOWN_MS = 2 * 1000;
 
 // Short self-heal window for request-scoped/provider-surface errors. These
 // should clear from Provider UI quickly and be retried on the next call.
-export const PROVIDER_SELF_HEAL_COOLDOWN_MS = 3 * 1000;
+export const PROVIDER_SELF_HEAL_COOLDOWN_MS_DEFAULT = 3 * 1000;
 
 // Hard cap for provider-reported rate limit cooldown (e.g. codex resets_at can be 5-6h)
-export const MAX_RATE_LIMIT_COOLDOWN_MS = 30 * 60 * 1000;
+export const MAX_RATE_LIMIT_COOLDOWN_MS_DEFAULT = 30 * 60 * 1000;
+
+// Runtime overrides loaded from settings (errorFix). Updated by getErrorFixConfig().
+let errorFixConfig = null;
+
+export function getErrorFixConfig() { return errorFixConfig; }
+
+export function setErrorFixConfig(cfg) { errorFixConfig = cfg || null; }
+
+export function resolveErrorFix(key, fallback) {
+  return (errorFixConfig && Number.isFinite(errorFixConfig[key]) && errorFixConfig[key] > 0)
+    ? errorFixConfig[key]
+    : fallback;
+}
 
 // Cooldown durations (ms)
 const COOLDOWN = {
@@ -83,22 +96,22 @@ const COOLDOWN = {
  */
 export const ERROR_RULES = [
   // --- Transient stream errors: short cooldown, don't mark account dead long ---
-  { text: "empty upstream stream",             cooldownMs: PROVIDER_SELF_HEAL_COOLDOWN_MS, selfHeal: true },
-  { text: "upstream first productive timeout", cooldownMs: PROVIDER_SELF_HEAL_COOLDOWN_MS, selfHeal: true },
-  { text: "upstream stalled",                  cooldownMs: PROVIDER_SELF_HEAL_COOLDOWN_MS, selfHeal: true },
-  { text: "upstream headers timeout",          cooldownMs: PROVIDER_SELF_HEAL_COOLDOWN_MS, selfHeal: true },
-  { status: 502, cooldownMs: PROVIDER_SELF_HEAL_COOLDOWN_MS, selfHeal: true },
-  { status: 503, cooldownMs: PROVIDER_SELF_HEAL_COOLDOWN_MS, selfHeal: true },
-  { status: 504, cooldownMs: PROVIDER_SELF_HEAL_COOLDOWN_MS, selfHeal: true },
+  { text: "empty upstream stream",             cooldownMs: PROVIDER_SELF_HEAL_COOLDOWN_MS_DEFAULT, selfHeal: true },
+  { text: "upstream first productive timeout", cooldownMs: PROVIDER_SELF_HEAL_COOLDOWN_MS_DEFAULT, selfHeal: true },
+  { text: "upstream stalled",                  cooldownMs: PROVIDER_SELF_HEAL_COOLDOWN_MS_DEFAULT, selfHeal: true },
+  { text: "upstream headers timeout",          cooldownMs: PROVIDER_SELF_HEAL_COOLDOWN_MS_DEFAULT, selfHeal: true },
+  { status: 502, cooldownMs: PROVIDER_SELF_HEAL_COOLDOWN_MS_DEFAULT, selfHeal: true },
+  { status: 503, cooldownMs: PROVIDER_SELF_HEAL_COOLDOWN_MS_DEFAULT, selfHeal: true },
+  { status: 504, cooldownMs: PROVIDER_SELF_HEAL_COOLDOWN_MS_DEFAULT, selfHeal: true },
   // --- Request/provider surface errors: short auto-heal, do not mark account dead ---
-  { text: "context_too_large",        cooldownMs: PROVIDER_SELF_HEAL_COOLDOWN_MS, selfHeal: true },
-  { text: "input tokens exceed",      cooldownMs: PROVIDER_SELF_HEAL_COOLDOWN_MS, selfHeal: true },
-  { text: "input exceeds the context window", cooldownMs: PROVIDER_SELF_HEAL_COOLDOWN_MS, selfHeal: true },
-  { text: "context length exceeded",  cooldownMs: PROVIDER_SELF_HEAL_COOLDOWN_MS, selfHeal: true },
-  { text: "maximum context length",   cooldownMs: PROVIDER_SELF_HEAL_COOLDOWN_MS, selfHeal: true },
-  { text: "reduce conversation context", cooldownMs: PROVIDER_SELF_HEAL_COOLDOWN_MS, selfHeal: true },
-  { text: "tools and response_format cannot be combined", cooldownMs: PROVIDER_SELF_HEAL_COOLDOWN_MS, selfHeal: true },
-  { text: "<!doctype html>",          cooldownMs: PROVIDER_SELF_HEAL_COOLDOWN_MS, selfHeal: true },
+  { text: "context_too_large",        cooldownMs: PROVIDER_SELF_HEAL_COOLDOWN_MS_DEFAULT, selfHeal: true },
+  { text: "input tokens exceed",      cooldownMs: PROVIDER_SELF_HEAL_COOLDOWN_MS_DEFAULT, selfHeal: true },
+  { text: "input exceeds the context window", cooldownMs: PROVIDER_SELF_HEAL_COOLDOWN_MS_DEFAULT, selfHeal: true },
+  { text: "context length exceeded",  cooldownMs: PROVIDER_SELF_HEAL_COOLDOWN_MS_DEFAULT, selfHeal: true },
+  { text: "maximum context length",   cooldownMs: PROVIDER_SELF_HEAL_COOLDOWN_MS_DEFAULT, selfHeal: true },
+  { text: "reduce conversation context", cooldownMs: PROVIDER_SELF_HEAL_COOLDOWN_MS_DEFAULT, selfHeal: true },
+  { text: "tools and response_format cannot be combined", cooldownMs: PROVIDER_SELF_HEAL_COOLDOWN_MS_DEFAULT, selfHeal: true },
+  { text: "<!doctype html>",          cooldownMs: PROVIDER_SELF_HEAL_COOLDOWN_MS_DEFAULT, selfHeal: true },
 
   // --- Text-based rules (checked first, order = priority) ---
   { text: "no credentials",           cooldownMs: COOLDOWN.long },
@@ -126,7 +139,7 @@ export const ERROR_RULES = [
   { status: 402, cooldownMs: COOLDOWN.long },
   { status: 403, cooldownMs: COOLDOWN.long },
   { status: 404, cooldownMs: COOLDOWN.long },
-  { status: 530, cooldownMs: PROVIDER_SELF_HEAL_COOLDOWN_MS, selfHeal: true },
+  { status: 530, cooldownMs: PROVIDER_SELF_HEAL_COOLDOWN_MS_DEFAULT, selfHeal: true },
   { status: 429, backoff: true },
 ];
 
@@ -136,6 +149,6 @@ export const COOLDOWN_MS = {
   paymentRequired: COOLDOWN.long,
   notFound: COOLDOWN.long,
   transient: TRANSIENT_COOLDOWN_MS,
-  selfHeal: PROVIDER_SELF_HEAL_COOLDOWN_MS,
+  selfHeal: PROVIDER_SELF_HEAL_COOLDOWN_MS_DEFAULT,
   requestNotAllowed: COOLDOWN.short,
 };

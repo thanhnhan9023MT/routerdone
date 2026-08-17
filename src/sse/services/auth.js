@@ -1,7 +1,7 @@
 import { getProviderConnections, validateApiKey, updateProviderConnection, getSettings } from "@/lib/localDb";
 import { resolveConnectionProxyConfig } from "@/lib/network/connectionProxy";
 import { formatRetryAfter, checkFallbackError, isClientPayloadError, isModelLockActive, buildModelLockUpdate, getEarliestModelLockUntil, isBusyConcurrencyError, isPreflightTimeoutError, shouldLockConnectionForError, resolveConnectionCooldownMs, buildModelFailureBackoffUpdate, buildClearModelFailureUpdate, isRateLimitError, isProviderSelfHealError, shouldDisableConnectionForError, normalizeStaleConnectionState } from "open-sse/services/accountFallback.js";
-import { MAX_RATE_LIMIT_COOLDOWN_MS, BUSY_CONNECTION_COOLDOWN_MS } from "open-sse/config/errorConfig.js";
+import { MAX_RATE_LIMIT_COOLDOWN_MS_DEFAULT, BUSY_CONNECTION_COOLDOWN_MS } from "open-sse/config/errorConfig.js";
 import { acquire as acquireConnectionSlot, hasCapacity as connectionHasCapacity } from "open-sse/services/connectionConcurrency.js";
 import { resolveProviderId, FREE_PROVIDERS } from "@/shared/constants/providers.js";
 import * as log from "../utils/logger.js";
@@ -333,7 +333,7 @@ export async function markAccountUnavailable(connectionId, status, errorText, pr
     newBackoffLevel = 0;
   } else if (resetsAtMs && resetsAtMs > Date.now()) {
     shouldFallback = true;
-    cooldownMs = Math.min(resetsAtMs - Date.now(), MAX_RATE_LIMIT_COOLDOWN_MS);
+    cooldownMs = Math.min(resetsAtMs - Date.now(), MAX_RATE_LIMIT_COOLDOWN_MS_DEFAULT);
     newBackoffLevel = 0;
   } else {
     ({ shouldFallback, cooldownMs, newBackoffLevel, selfHeal } = checkFallbackError(status, reasonText, backoffLevel));

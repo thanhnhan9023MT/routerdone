@@ -14,6 +14,8 @@ const DEFAULT_MAX_BYTES = 3_500_000; // byte threshold for oversized request pay
 const DEFAULT_KEEP_RECENT = 8;       // keep last N reasoning items intact
 const CHARS_PER_TOKEN = 4;           // byte-prune sizing fallback; not used for token reporting
 const TRIM_PLACEHOLDER = "[trimmed by RouterDone context guard]";
+const OMITTED_IMAGE_PLACEHOLDER = "[image omitted by RouterDone context guard]";
+const OMITTED_AUDIO_PLACEHOLDER = "[audio omitted by RouterDone context guard]";
 
 // Find the conversation items array across supported request formats.
 function findItems(body) {
@@ -55,6 +57,71 @@ function canTrimItem(item) {
   return role !== "system" && role !== "developer";
 }
 
+function isMediaBlock(value) {
+  if (!value || typeof value !== "object") return false;
+  const type = value.type;
+  if (["image_url", "image", "input_image", "audio_url", "input_audio"].includes(type)) return true;
+  if (value.image_url && typeof value.image_url === "object") return true;
+  if (typeof value.image_url === "string") return true;
+  if (value.audio_url && typeof value.audio_url === "object") return true;
+  if (typeof value.audio_url === "string") return true;
+  return false;
+}
+
+function mediaPlaceholderBlock(value) {
+  const type = value?.type || "";
+  const isAudio = type.includes("audio") || value?.audio_url;
+  const text = isAudio ? OMITTED_AUDIO_PLACEHOLDER : OMITTED_IMAGE_PLACEHOLDER;
+  return { type: type.startsWith("input_") ? "input_text" : "text", text };
+}
+
+function containsTrimPlaceholder(value, seen = new WeakSet()) {
+  if (typeof value === "string") return value.includes(TRIM_PLACEHOLDER);
+  if (!value || typeof value !== "object") return false;
+  if (seen.has(value)) return false;
+  seen.add(value);
+  if (Array.isArray(value)) return value.some((item) => containsTrimPlaceholder(item, seen));
+  return Object.values(value).some((item) => containsTrimPlaceholder(item, seen));
+}
+
+function sanitizeTrimmedMediaValue(value, stats, seen = new WeakSet()) {
+  if (!value || typeof value !== "object") return value;
+  if (seen.has(value)) return value;
+  seen.add(value);
+
+  if (Array.isArray(value)) {
+    for (let i = 0; i < value.length; i++) {
+      const item = value[i];
+      if (isMediaBlock(item) && containsTrimPlaceholder(item)) {
+        const next = mediaPlaceholderBlock(item);
+        stats.sanitizedMediaBlocks++;
+        stats.savedBytes += Math.max(0, estimateValueBytes(item) - estimateValueBytes(next));
+        value[i] = next;
+        continue;
+      }
+      value[i] = sanitizeTrimmedMediaValue(item, stats, seen);
+    }
+    return value;
+  }
+
+  if (isMediaBlock(value)) return value;
+
+  for (const key of Object.keys(value)) {
+    value[key] = sanitizeTrimmedMediaValue(value[key], stats, seen);
+  }
+  return value;
+}
+
+export function sanitizeTrimmedMediaBlocks(body) {
+  if (!body || typeof body !== "object") return null;
+  const items = findItems(body);
+  if (!items || items.length === 0) return null;
+  const stats = { sanitizedMediaBlocks: 0, savedBytes: 0 };
+  sanitizeTrimmedMediaValue(items, stats);
+  return stats.sanitizedMediaBlocks > 0 ? stats : null;
+}
+
+
 function isImageMediaObject(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const type = String(value.type || "").toLowerCase();
@@ -77,6 +144,10 @@ function trimStringLeaves(value, budget, seen = new WeakSet()) {
   if (!value || typeof value !== "object" || isImageMediaObject(value)) return value;
   if (seen.has(value)) return value;
   seen.add(value);
+  // Never recurse into media payloads. Trimming a data URL in-place creates an
+  // invalid image/audio block that some upstream token counters reject before
+  // generation (observed as VietAPI count_token_failed on gpt-5.5).
+  if (isMediaBlock(value)) return value;
   if (Array.isArray(value)) {
     for (let i = 0; i < value.length && budget.saved < budget.need; i++) {
       value[i] = trimStringLeaves(value[i], budget, seen);
@@ -181,18 +252,32 @@ export function pruneContextToHardCap(body, { enabled = true, hardCapTokens = 0,
     need: Math.max(0, (beforeTokens - targetTokens) * CHARS_PER_TOKEN),
     saved: 0,
     trimmedStrings: 0,
+    trimmedMediaBlocks: 0,
     minStringBytes: 1024,
     keepChars: 256,
   };
   const lastTrimIndex = Math.max(0, items.length - Math.max(1, keepRecent));
+  // KHÔNG chạy bước "thay media của item cũ bằng placeholder" mà upstream v0.5.16x thêm
+  // (replaceOldMediaBlocks). Nó phá 3 đảm bảo đã có của fork — đo 2026-08-17: 3 test
+  // media ĐANG XANH ở fork (28/28) chuyển sang ĐỎ ngay khi nhận bước đó:
+  //   preserves Responses and Chat image URLs byte-for-byte
+  //   preserves Claude and Gemini inline image payloads
+  //   leaves an image-only request above the cap instead of damaging it
+  // Hợp đồng của fork là: THÀ để request vượt trần (chatCore trả context_too_large 400)
+  // còn hơn gửi lên một khối ảnh đã bị sửa. Lý do không phải khẩu vị: media bị cắt/thay
+  // làm upstream đếm token thất bại TRƯỚC khi sinh (đã thấy VietAPI count_token_failed
+  // trên gpt-5.5) — hỏng nặng hơn và khó truy hơn là một lỗi 400 nói thẳng.
+  // Phần media CÒN LẠI của upstream vẫn giữ: isMediaBlock / mediaPlaceholderBlock /
+  // sanitizeTrimmedMediaBlocks (đường CỨU media đã bị build cũ cắt) vẫn được dùng.
   for (let i = 0; i < lastTrimIndex && budget.saved < budget.need; i++) {
     if (!canTrimItem(items[i])) continue;
     trimStringLeaves(items[i], budget);
   }
 
-  if (budget.trimmedStrings === 0) return null;
+  if (budget.trimmedStrings === 0 && budget.trimmedMediaBlocks === 0) return null;
   return {
     trimmedStrings: budget.trimmedStrings,
+    trimmedMediaBlocks: budget.trimmedMediaBlocks,
     savedBytes: budget.saved,
     estTokensBefore: beforeTokens,
     estTokensAfter: estimateInputTokens(body, model),
@@ -202,9 +287,12 @@ export function pruneContextToHardCap(body, { enabled = true, hardCapTokens = 0,
 }
 
 export function formatHardCapPruneLog(stats) {
-  if (!stats || stats.trimmedStrings === 0) return null;
+  if (!stats || (stats.trimmedStrings === 0 && stats.trimmedMediaBlocks === 0)) return null;
   const savedKB = Math.round(stats.savedBytes / 1024);
-  return `[CTX-GUARD] pruned ${stats.trimmedStrings} old string fields (${savedKB}KB) | est ${stats.estTokensBefore} -> ${stats.estTokensAfter} tokens | cap ${stats.hardCapTokens}`;
+  const parts = [];
+  if (stats.trimmedStrings) parts.push(`${stats.trimmedStrings} old string fields`);
+  if (stats.trimmedMediaBlocks) parts.push(`${stats.trimmedMediaBlocks} old media blocks`);
+  return `[CTX-GUARD] pruned ${parts.join(" + ")} (${savedKB}KB) | est ${stats.estTokensBefore} -> ${stats.estTokensAfter} tokens | cap ${stats.hardCapTokens}`;
 }
 export function formatContextGuardLog(stats) {
   if (!stats || stats.evictedItems === 0) return null;

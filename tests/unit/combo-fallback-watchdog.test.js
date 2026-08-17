@@ -210,7 +210,7 @@ describe("adaptive combo fallback", () => {
 
   it("escalates the cooldown exponentially on consecutive failures, capped", async () => {
     const preflightFail = async () => new Response(
-      JSON.stringify({ error: { message: "upstream first productive timeout" } }),
+      JSON.stringify({ error: { message: "bad gateway" } }),
       { status: 502 },
     );
     const armOnce = () => handleComboChat({
@@ -254,7 +254,7 @@ describe("adaptive combo fallback", () => {
 
   it("resets the cooldown counter to base after one successful call", async () => {
     const preflightFail = async () => new Response(
-      JSON.stringify({ error: { message: "upstream first productive timeout" } }),
+      JSON.stringify({ error: { message: "bad gateway" } }),
       { status: 502 },
     );
     const arm = (fn) => handleComboChat({
@@ -287,7 +287,7 @@ describe("adaptive combo fallback", () => {
     vi.useFakeTimers();
     try {
       const preflightFail = async () => new Response(
-        JSON.stringify({ error: { message: "upstream first productive timeout" } }),
+        JSON.stringify({ error: { message: "bad gateway" } }),
         { status: 502 },
       );
       const arm = () => handleComboChat({
@@ -530,6 +530,9 @@ describe("retry-after parsing", () => {
 });
 
 describe("busy and connection cooldown classification", () => {
+  const log = { info: () => {}, warn: () => {}, debug: () => {} };
+  beforeEach(() => { resetComboCooldowns(); });
+
   it("classifies provider busy/concurrency text for short account cooldown", () => {
     for (const msg of [
       "Hệ thống đang bận, vui lòng thử lại",
@@ -552,4 +555,91 @@ describe("busy and connection cooldown classification", () => {
     expect(shouldLockConnectionForError({ status: 502, errorText: msg, recentFailureCount: 2 })).toBe(true);
     expect(resolveConnectionCooldownMs({ status: 502, errorText: msg, cooldownMs: 1000, recentFailureCount: 2 })).toBeGreaterThan(1000);
   });
+
+  it("self-heal errors use short fixed cooldown without bumping failure counter", async () => {
+    const selfHealFail = async () => new Response(
+      JSON.stringify({ error: { message: "empty upstream stream" } }),
+      { status: 502 },
+    );
+    const arm = () => handleComboChat({
+      body: { model: "combo", messages: [] },
+      models: ["p/a"],
+      comboName: "combo",
+      comboRetryAttempts: 0,
+      comboRetryDelayMs: 0,
+      log,
+      handleSingleModel: selfHealFail,
+    });
+
+    await arm();
+    const state = getComboCooldownState("p/a");
+    // failureCount must NOT bump for self-heal errors
+    expect(state.failureCount).toBe(0);
+    // Cooldown is short (3s), not the exponential 30s base
+    expect(state.remainingMs).toBeGreaterThan(0);
+    expect(state.remainingMs).toBeLessThanOrEqual(3000);
+  });
+
+  it("self-heal errors still deprioritize model briefly then recover", async () => {
+    // Arm a 3s self-heal cooldown on p/a via empty stream.
+    await handleComboChat({
+      body: { model: "combo", messages: [] },
+      models: ["p/a"],
+      comboName: "combo",
+      comboRetryAttempts: 0,
+      comboRetryDelayMs: 0,
+      log,
+      handleSingleModel: async () => new Response(
+        JSON.stringify({ error: { message: "empty upstream stream" } }),
+        { status: 502 },
+      ),
+    });
+
+    // Immediate second request: p/a should be deprioritized behind p/b.
+    // Make p/b fail so the combo reaches p/a, proving it was deprioritized not skipped.
+    const tried = [];
+    const res = await handleComboChat({
+      body: { model: "combo", messages: [] },
+      models: ["p/a", "p/b"],
+      comboName: "combo",
+      comboRetryAttempts: 0,
+      comboRetryDelayMs: 0,
+      log,
+      handleSingleModel: async (_body, model) => {
+        tried.push(model);
+        if (model === "p/b") return new Response(JSON.stringify({ error: { message: "bad gateway" } }), { status: 502 });
+        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      },
+    });
+    expect(res.ok).toBe(true);
+    expect(tried).toEqual(["p/b", "p/a"]);
+    // Cooldown window is short
+    expect(getComboCooldownState("p/a").remainingMs).toBeLessThanOrEqual(3000);
+  });
+
+  it("repeated self-heal errors do not escalate exponentially", async () => {
+    const selfHealFail = async () => new Response(
+      JSON.stringify({ error: { message: "empty upstream stream" } }),
+      { status: 502 },
+    );
+    const arm = () => handleComboChat({
+      body: { model: "combo", messages: [] },
+      models: ["p/a"],
+      comboName: "combo",
+      comboRetryAttempts: 0,
+      comboRetryDelayMs: 0,
+      log,
+      handleSingleModel: selfHealFail,
+    });
+
+    // Fail 3 times — each should get a 3s window, never escalating.
+    for (let i = 0; i < 3; i++) {
+      await arm();
+      const state = getComboCooldownState("p/a");
+      expect(state.failureCount).toBe(0);
+      expect(state.remainingMs).toBeGreaterThan(0);
+      expect(state.remainingMs).toBeLessThanOrEqual(3000);
+    }
+  });
+
 });

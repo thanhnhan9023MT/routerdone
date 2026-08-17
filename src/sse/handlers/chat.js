@@ -18,7 +18,9 @@ import { handleComboChat, handleFusionChat } from "open-sse/services/combo.js";
 import { handleBypassRequest } from "open-sse/utils/bypassHandler.js";
 import { HTTP_STATUS } from "open-sse/config/runtimeConfig.js";
 import { resolveRoutePolicy } from "open-sse/services/routePolicy.js";
-import { detectContextBackupFormat, isContextBackupEligible, normalizeContextBackupConfig } from "../services/contextSummaryBackup.js";
+import { buildContextSummaryBackup, detectContextBackupFormat, isContextBackupEligible, normalizeContextBackupConfig } from "../services/contextSummaryBackup.js";
+import { preprocessVisionContent, hasImageContent, resolveTargetCaps, shouldDeferComboVisionPreprocessing } from "../services/visionPreprocessor.js";
+import { getCapabilitiesForModel } from "open-sse/providers/capabilities.js";
 import { release as releaseConnectionSlot, touch as touchConnectionSlot } from "open-sse/services/connectionConcurrency.js";
 
 // Hand a per-connection concurrency slot back when the response is actually finished.
@@ -159,6 +161,20 @@ function resolveModelRedirect(modelStr, settings) {
   }
   return MODEL_REDIRECTS.get(modelStr) || null;
 }
+
+// Resolve capabilities of the configured vision preprocessing model so the
+// preprocessor can pick a reasoning-aware timeout. Best-effort: returns null on
+// any failure (preprocessor then uses the default timeout).
+async function resolveVisionModelCaps(settings) {
+  try {
+    const visionModel = settings?.visionPreprocessingModel || "oc/mimo-v2.5-free";
+    const info = await getModelInfo(visionModel);
+    if (!info?.provider) return null;
+    return getCapabilitiesForModel(info.provider, info.model);
+  } catch {
+    return null;
+  }
+}
 import { detectFormatByEndpoint } from "open-sse/translator/formats.js";
 import * as log from "../utils/logger.js";
 import { updateProviderCredentials, checkAndRefreshToken } from "../services/tokenRefresh.js";
@@ -250,7 +266,9 @@ export async function handleChat(request, clientRawRequest = null) {
 
   // Per-API-key policy gate (resale / donate quota). modelStr is now the
   // post-redirect effective requested name — the right value to match a
-  // "specific model" or "specific combo" restriction against.
+  // "specific model" or "specific combo" restriction against. Run this before
+  // vision preprocessing so denied/quota-exceeded requests do not spend a
+  // secondary vision call.
   if (keyRecord) {
     const modelDecision = await checkModelAllowed(modelStr, keyRecord);
     if (!modelDecision.allowed) {
@@ -283,8 +301,48 @@ export async function handleChat(request, clientRawRequest = null) {
     }
   }
 
-  // Check if model is a combo (has multiple models with fallback)
+  // Resolve combo membership once before vision preprocessing so vision-first
+  // combos can feed the raw image to their first model and only preprocess
+  // lazily if a non-vision fallback is actually tried.
   const comboModels = await getComboModels(modelStr);
+  // Vision preprocessing: if body has images, preprocess through a vision model
+  // to convert image blocks to OCR text. For combos with at least one
+  // vision-capable member, defer this work — handleComboChat's auto-switch will
+  // float a vision model to the front so it reads the raw image directly, and
+  // non-vision fallbacks get a cloned+preprocessed body lazily. This avoids
+  // downgrading image quality (raw → OCR text → re-read by same vision model)
+  // and saves latency on the happy path.
+  let deferComboVisionPreprocessing = false;
+  if (hasImageContent(body)) {
+    try {
+      deferComboVisionPreprocessing = !!comboModels && await shouldDeferComboVisionPreprocessing(modelStr, {
+        getModelInfo,
+        getComboModels,
+        getCapabilitiesForModel,
+      });
+      if (deferComboVisionPreprocessing) {
+        log.info("VISION", "Deferring image preprocessing for vision-capable combo: " + modelStr);
+      } else {
+        const targetCaps = await resolveTargetCaps(modelStr, {
+          getModelInfo,
+          getComboModels,
+          getCapabilitiesForModel,
+        });
+        const preprocessed = await preprocessVisionContent(body, settings, log, targetCaps, {
+          apiKey,
+          visionCaps: await resolveVisionModelCaps(settings),
+        });
+        if (preprocessed) {
+          body = preprocessed;
+          log.info("VISION", "Images preprocessed for combo/direct model: " + modelStr);
+        }
+      }
+    } catch (e) {
+      log.warn("VISION", "Preprocessing error: " + e.message + " (non-fatal)");
+    }
+  }
+
+  // Check if model is a combo (has multiple models with fallback)
   body = await maybeBackupBody(body, settings, request);
   if (comboModels) {
     // Check for combo-specific strategy first, fallback to global
@@ -328,7 +386,34 @@ export async function handleChat(request, clientRawRequest = null) {
       comboOutputModel: comboModels.outputModel,
       comboStripReasoning: comboModels.stripReasoning,
       comboMaskIdentity: comboModels.maskIdentity,
-      handleSingleModel: (b, m, attemptContext) => handleSingleModelChat(b, m, clientRawRequest, request, apiKey, attemptContext),
+      handleSingleModel: async (b, m, attemptContext) => {
+        let attemptBody = b;
+        // Lazy vision preprocessing: only when deferred AND this attempt's
+        // model lacks vision. Clone before preprocessing so the shared body
+        // keeps raw images for vision-capable members (no mutation leak).
+        if (deferComboVisionPreprocessing && hasImageContent(b)) {
+          try {
+            const attemptInfo = await getModelInfo(m);
+            const attemptCaps = attemptInfo?.provider
+              ? getCapabilitiesForModel(attemptInfo.provider, attemptInfo.model)
+              : null;
+            if (attemptCaps?.vision !== true) {
+              attemptBody = structuredClone(b);
+              const preprocessed = await preprocessVisionContent(attemptBody, settings, log, attemptCaps, {
+                apiKey,
+                visionCaps: await resolveVisionModelCaps(settings),
+              });
+              if (preprocessed) {
+                attemptBody = preprocessed;
+                log.info("VISION", "Images lazily preprocessed for combo fallback model: " + m);
+              }
+            }
+          } catch (e) {
+            log.warn("VISION", "Lazy preprocessing error: " + e.message + " (non-fatal)");
+          }
+        }
+        return handleSingleModelChat(attemptBody, m, clientRawRequest, request, apiKey, attemptContext);
+      },
       log,
       comboName: modelStr,
       comboStrategy,

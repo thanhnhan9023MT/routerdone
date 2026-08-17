@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { guardContext, formatContextGuardLog, estimateInputTokens, pruneContextToHardCap, formatHardCapPruneLog } from "../../open-sse/rtk/contextGuard.js";
+import { guardContext, formatContextGuardLog, estimateInputTokens, pruneContextToHardCap, formatHardCapPruneLog, sanitizeTrimmedMediaBlocks } from "../../open-sse/rtk/contextGuard.js";
 import { countRequestTokens } from "../../open-sse/utils/tokenEstimate.js";
 
 // Build a reasoning item with a sized encrypted_content blob.
@@ -278,6 +278,85 @@ describe("pruneContextToHardCap", () => {
     expect(body.input[1].content).toContain("[trimmed by RouterDone context guard]");
     expect(body.input[3].content).toBe("recent assistant");
     expect(body.input[4].content).toBe("recent user");
+  });
+
+  it("does NOT replace old media blocks — leaves them byte-for-byte", () => {
+    // ĐẢO LẠI CÓ CHỦ ĐÍCH so với upstream v0.5.16x. Upstream thêm bước
+    // replaceOldMediaBlocks (thay media của item CŨ bằng placeholder để tiết kiệm token)
+    // kèm test khẳng định điều đó. Trên hệ này bước ấy làm ĐỎ 3 test media đang xanh của
+    // fork, vì hợp đồng ở đây là: THÀ để request vượt trần (chatCore trả
+    // context_too_large 400) còn hơn gửi lên một khối ảnh đã bị sửa — media bị cắt/thay
+    // làm upstream đếm token thất bại TRƯỚC khi sinh (VietAPI count_token_failed trên
+    // gpt-5.5), hỏng nặng và khó truy hơn một lỗi 400 nói thẳng.
+    const imageUrl = `data:image/png;base64,${"b".repeat(1200)}`;
+    const body = {
+      messages: [
+        { role: "user", content: [{ type: "image_url", image_url: { url: imageUrl } }, { type: "text", text: "T".repeat(1800) }] },
+        { role: "user", content: "recent" },
+      ],
+    };
+    const stats = pruneContextToHardCap(body, { hardCapTokens: 400, keepRecent: 1, model: "gpt-5" });
+    // Chuỗi văn bản bên cạnh VẪN bị cắt — guard vẫn làm việc của nó.
+    expect(stats.trimmedStrings).toBeGreaterThan(0);
+    // Nhưng ảnh thì không ai được chạm, và không có media block nào bị thay.
+    expect(stats.trimmedMediaBlocks).toBe(0);
+    expect(body.messages[0].content[0].image_url.url).toBe(imageUrl);
+  });
+
+  it("sanitizes media blocks that were already trimmed by older builds", () => {
+    const body = {
+      messages: [
+        { role: "user", content: [
+          { type: "text", text: "old screenshot" },
+          { type: "image_url", image_url: { url: `data:image/png;base64,AAAA\n[trimmed by RouterDone context guard] (100 chars removed)` } },
+        ] },
+        { role: "user", content: "alo" },
+      ],
+    };
+
+    const stats = sanitizeTrimmedMediaBlocks(body);
+
+    expect(stats.sanitizedMediaBlocks).toBe(1);
+    expect(body.messages[0].content[1]).toEqual({
+      type: "text",
+      text: "[image omitted by RouterDone context guard]",
+    });
+  });
+
+  it("does not sanitize valid media blocks", () => {
+    const imageUrl = "data:image/png;base64,AAAA";
+    const body = {
+      messages: [
+        { role: "user", content: [{ type: "image_url", image_url: { url: imageUrl } }] },
+      ],
+    };
+
+    expect(sanitizeTrimmedMediaBlocks(body)).toBeNull();
+    expect(body.messages[0].content[0].image_url.url).toBe(imageUrl);
+  });
+
+  it("keeps recent media blocks intact when pruning old context", () => {
+    // base64 NGẪU NHIÊN, giống ảnh thật. KHÔNG dùng "A".repeat(...): BPE của js-tiktoken
+    // là BẬC HAI với chuỗi lặp cùng ký tự (đo 2026-08-17: 20k chữ "A" = 17.762ms; 20k
+    // base64 ngẫu nhiên = 14ms), nên payload lặp làm test timeout vì lý do chẳng liên
+    // quan gì tới điều nó kiểm — là ảnh gần đây có còn nguyên hay không.
+    const b64 = Array.from({ length: 20_000 }, (_, i) =>
+      "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"[(i * 7919) % 64]).join("");
+    const imageUrl = `data:image/png;base64,${b64}`;
+    const body = {
+      messages: [
+        // văn bản THẬT (không phải "x".repeat) — cùng lý do bậc hai như ghi chú trên
+        { role: "user", content: "old " + "the quick brown fox jumps over the lazy dog ".repeat(455) },
+        { role: "assistant", content: "recent assistant" },
+        { role: "user", content: [{ type: "image_url", image_url: { url: imageUrl } }] },
+      ],
+    };
+    const before = estimateInputTokens(body, "gpt-5");
+    const hardCapTokens = Math.max(1, Math.floor(before * 0.6));
+
+    pruneContextToHardCap(body, { hardCapTokens, keepRecent: 2, model: "gpt-5" });
+
+    expect(body.messages[2].content[0].image_url.url).toBe(imageUrl);
   });
 
   it("preserves Responses and Chat image URLs byte-for-byte", () => {

@@ -1,4 +1,7 @@
 // Auto-generated: static imports of all registry entries
+// aidone: từ upstream upgrade-v0.5.122. Đặt tên riêng thay vì đánh số lại p0..p102
+// của fork — đổi số hàng loạt là cách dễ nhất để lệch import ↔ entry mà không ai thấy.
+import pAidone from "./aidone.js";
 import p0 from "./alicode.js";
 import p1 from "./alicode-intl.js";
 import p2 from "./anthropic.js";
@@ -105,6 +108,7 @@ import p101 from "./xpiki.js";
 import p102 from "./kenari.js";
 
 export default [
+  pAidone,
   p0,
   p1,
   p2,

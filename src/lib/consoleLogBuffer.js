@@ -55,15 +55,27 @@ function formatArg(arg) {
   }
 }
 
-function appendLine(line) {
+function appendLine(line, request = null) {
   pruneExpiredLogs(false);
-  const entry = { line, createdAt: Date.now() };
+  const entry = { line, createdAt: Date.now(), ...(request ? { request } : {}) };
   state.logs.push(entry);
   const maxLines = CONSOLE_LOG_CONFIG.maxLines;
   if (state.logs.length > maxLines) {
     state.logs = state.logs.slice(-maxLines);
   }
   state.emitter.emit("line", entry);
+}
+
+function formatRequestLog({ status = 200, stream = false, provider, model, duration = 0, ttft = 0, tokens = {}, displayProvider = null, comboName = null }) {
+  const inputTokens = tokens.input_tokens ?? tokens.prompt_tokens ?? 0;
+  const outputTokens = tokens.output_tokens ?? tokens.completion_tokens ?? 0;
+  const name = displayProvider || (provider || "unknown").slice(0, 25);
+  const combo = comboName ? `[${comboName}] ` : "";
+  return `[${status}] stream:${Boolean(stream)} ${combo}${name}/${model || "unknown"} | ${Math.max(0, Math.round(duration))}ms (TTFT ${Math.max(0, Math.round(ttft))}) | In: ${inputTokens} | Out: ${outputTokens}`;
+}
+
+export function appendRequestConsoleLog(request) {
+  appendLine(formatRequestLog(request), request);
 }
 
 function getLogLines() {
@@ -74,7 +86,7 @@ function getLogEntries() {
   const now = Date.now();
   return state.logs.map((entry) => {
     if (typeof entry === "string") return { line: entry, createdAt: now };
-    return { line: entry.line, createdAt: entry.createdAt };
+    return { line: entry.line, createdAt: entry.createdAt, ...(entry.request ? { request: entry.request } : {}) };
   });
 }
 

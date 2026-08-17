@@ -5,7 +5,7 @@ import { addBufferToUsage, filterUsageForFormat } from "../../utils/usageTrackin
 import { createErrorResult } from "../../utils/error.js";
 import { HTTP_STATUS } from "../../config/runtimeConfig.js";
 import { parseSSEToOpenAIResponse } from "./sseToJsonHandler.js";
-import { buildRequestDetail, extractRequestConfig, extractUsageFromResponse, saveUsageStats } from "./requestDetail.js";
+import { buildRequestDetail, extractRequestConfig, extractUsageFromResponse, logChatRequestComplete, saveUsageStats } from "./requestDetail.js";
 import { appendRequestLog, saveRequestDetail } from "@/lib/usageDb.js";
 import { decloakToolNames } from "../../utils/claudeCloaking.js";
 import { openaiChatToClaudeMessage } from "../../translator/response/openai-chat-to-claude-message.js";
@@ -154,7 +154,12 @@ export function hasProductiveResponse(body) {
   const choice = body.choices?.[0];
   const msg = choice?.message || choice?.delta || {};
   if (typeof msg.content === "string" && msg.content.length > 0) return true;
+  // Claude-format responses carry content as an array of blocks
+  // [{ type:"text", text:"hello" }] — each is a productive response.
+  if (Array.isArray(msg.content) && msg.content.some((b) => typeof b?.text === "string" && b.text.length > 0)) return true;
   if (typeof msg.reasoning_content === "string" && msg.reasoning_content.length > 0) return true;
+  // Some providers (e.g. opencode.ai) return reasoning text in `reasoning` instead of `reasoning_content`
+  if (typeof msg.reasoning === "string" && msg.reasoning.length > 0) return true;
   if (typeof msg.refusal === "string" && msg.refusal.length > 0) return true;
   if (Array.isArray(msg.tool_calls) && msg.tool_calls.length > 0) return true;
   if (typeof choice?.text === "string" && choice.text.length > 0) return true;
@@ -183,6 +188,18 @@ export function hasProductiveResponse(body) {
   }
   const parts = body.candidates?.[0]?.content?.parts || body.response?.candidates?.[0]?.content?.parts;
   if (Array.isArray(parts) && parts.some((p) => typeof p.text === "string" && p.text.length > 0 || p.functionCall)) return true;
+  // CỐ Ý KHÔNG lấy theo upstream v0.5.16x ở đây. Upstream đổi dòng cuối thành
+  // `return !!choice` ("reasoning models may consume all tokens for internal thinking"),
+  // tức một response OpenAI RỖNG HOÀN TOÀN vẫn được coi là có nội dung.
+  //
+  // Trên hệ này điều đó phá đúng cơ chế đang bảo vệ khách: câu trả lời rỗng là TÍN HIỆU
+  // để failover sang nguồn khác (EMPTY_STREAM_FAILOVER_GROUPS ở litellm, sàn max_tokens
+  // theo host trong translator/concerns/paramSupport.js). Nhận `!!choice` thì ca "thinking
+  // ăn hết budget, không còn chữ nào" biến từ 502-có-failover thành **câu trả lời rỗng gửi
+  // cho khách và vẫn tính tiền** — đúng lỗi mà sàn max_tokens của ohhmyagent phải vá
+  // 2026-08-17, và lúc đó chính 502 này là thứ làm nó lộ ra.
+  //
+  // Nếu sau này muốn theo upstream thì phải bù lại đường failover trước, đừng chỉ đổi dòng này.
   return false;
 }
 
@@ -284,9 +301,11 @@ export async function handleNonStreamingResponse({ providerResponse, provider, m
   reqLogger.logConvertedResponse(translatedResponse);
 
   const totalLatency = Date.now() - requestStartTime;
+  const latency = { ttft: totalLatency, total: totalLatency };
+  logChatRequestComplete({ status: providerResponse.status, stream, provider, model, latency, tokens: usage, routeInfo });
   saveRequestDetail(buildRequestDetail({
     provider, model, connectionId, apiKey, routeInfo,
-    latency: { ttft: totalLatency, total: totalLatency },
+    latency,
     tokens: usage || { prompt_tokens: 0, completion_tokens: 0 },
     request: extractRequestConfig(body, stream),
     providerRequest: finalBody || translatedBody || null,

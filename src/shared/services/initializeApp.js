@@ -15,6 +15,7 @@ import {
 } from "@/lib/tunnel";
 import { getMitmStatus, startMitm, loadEncryptedPassword, initDbHooks, restoreToolDNS, removeAllDNSEntriesSync, isSudoPasswordRequired } from "@/mitm/manager";
 import { startClaudeAutoPing } from "@/shared/services/claudeAutoPing";
+import { startMaintenanceScheduler } from "@/shared/services/maintenance";
 import { syncToJson as syncMitmAliasCache } from "@/lib/mitmAliasCache";
 
 // Inject correct paths and DB hooks into manager.js (CJS) from ESM context
@@ -88,6 +89,7 @@ export async function initializeApp() {
 
     startWatchdog();
     startNetworkMonitor();
+    startMaintenanceScheduler();
     autoStartMitm();
     startClaudeAutoPing();
   } catch (error) {

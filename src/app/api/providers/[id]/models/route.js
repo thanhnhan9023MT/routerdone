@@ -8,6 +8,40 @@ import { resolveKiroModels } from "open-sse/services/kiroModels.js";
 import { resolveQoderModels } from "open-sse/services/qoderModels.js";
 
 const GEMINI_CLI_MODELS_URL = "https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels";
+const configuredTimeout = Number(process.env.PROVIDER_MODELS_TIMEOUT_MS);
+const PROVIDER_MODELS_TIMEOUT_MS = Number.isFinite(configuredTimeout)
+  ? Math.min(60000, Math.max(1000, Math.round(configuredTimeout)))
+  : 10000;
+const PROVIDER_ERROR_LOG_TTL_MS = 60 * 1000;
+
+if (!globalThis.__routerdoneProviderModelErrors) globalThis.__routerdoneProviderModelErrors = new Map();
+const providerErrorLogState = globalThis.__routerdoneProviderModelErrors;
+
+async function fetchProviderModels(url, options = {}) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), PROVIDER_MODELS_TIMEOUT_MS);
+  const signals = [controller.signal, options.signal].filter(Boolean);
+  const signal = signals.length === 1
+    ? signals[0]
+    : AbortSignal.any(signals);
+  try {
+    return await fetch(url, { ...options, signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function logProviderModelsError(provider, status, errorClass = "upstream-error") {
+  const key = `${provider}:${status}:${errorClass}`;
+  const now = Date.now();
+  const last = providerErrorLogState.get(key) || 0;
+  if (now - last < PROVIDER_ERROR_LOG_TTL_MS) return;
+  providerErrorLogState.set(key, now);
+  while (providerErrorLogState.size > 200) {
+    providerErrorLogState.delete(providerErrorLogState.keys().next().value);
+  }
+  console.warn(`[provider-models] ${provider} failed (${status}): ${errorClass}`);
+}
 
 const parseOpenAIStyleModels = (data) => {
   if (Array.isArray(data)) return data;
@@ -107,9 +141,9 @@ const buildOAuthResolver = ({ refreshFn, fetchFn, parseFn, errorLabel }) => asyn
       const models = parseFn(data);
       if (models.length > 0) return { models };
     } else {
-      const errorText = await response.text();
-      warning = `${errorLabel}: ${response.status} ${errorText}`;
-      console.log(`${errorLabel} (falling back to static):`, errorText);
+      try { await response.body?.cancel(); } catch {}
+      warning = `${errorLabel}: ${response.status}`;
+      logProviderModelsError(errorLabel, response.status);
     }
   } catch (error) {
     warning = `${errorLabel}: ${error.message}`;
@@ -298,7 +332,7 @@ const PROVIDER_MODELS_CONFIG = {
       };
       let warning;
       try {
-        const result = await resolveQoderModels(credentials, { forceRefresh: true });
+        const result = await resolveQoderModels(credentials);
         if (result?.models?.length) {
           return {
             models: result.models.map((m) => ({
@@ -328,7 +362,7 @@ const PROVIDER_MODELS_CONFIG = {
       fetchFn: (token, conn) => {
         const projectId = conn.projectId || conn.providerSpecificData?.projectId;
         const body = projectId ? { project: projectId } : {};
-        return fetch(GEMINI_CLI_MODELS_URL, {
+        return fetchProviderModels(GEMINI_CLI_MODELS_URL, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -346,13 +380,13 @@ const PROVIDER_MODELS_CONFIG = {
   "ollama-local": {
     customResolver: async (connection) => {
       const url = `${resolveOllamaLocalHost(connection)}/api/tags`;
-      const response = await fetch(url, {
+      const response = await fetchProviderModels(url, {
         method: "GET",
         headers: { "Content-Type": "application/json" }
       });
       if (!response.ok) {
-        const errorText = await response.text();
-        console.log("Error fetching models from ollama-local:", errorText);
+        try { await response.body?.cancel(); } catch {}
+        logProviderModelsError("ollama-local", response.status);
         return { error: `Failed to fetch models: ${response.status}`, status: response.status };
       }
       const data = await response.json();
@@ -379,7 +413,7 @@ export async function GET(request, { params }) {
         return NextResponse.json({ error: "No base URL configured for OpenAI compatible provider" }, { status: 400 });
       }
       const url = `${baseUrl.replace(/\/$/, "")}/models`;
-      const response = await fetch(url, {
+      const response = await fetchProviderModels(url, {
         method: "GET",
         headers: {
           "Content-Type": "application/json",
@@ -388,8 +422,8 @@ export async function GET(request, { params }) {
       });
 
       if (!response.ok) {
-        const errorText = await response.text();
-        console.log(`Error fetching models from ${connection.provider}:`, errorText);
+        try { await response.body?.cancel(); } catch {}
+        logProviderModelsError(connection.provider, response.status);
         return NextResponse.json(
           { error: `Failed to fetch models: ${response.status}` },
           { status: response.status }
@@ -418,7 +452,7 @@ export async function GET(request, { params }) {
       }
 
       const url = `${baseUrl}/models`;
-      const response = await fetch(url, {
+      const response = await fetchProviderModels(url, {
         method: "GET",
         headers: {
           "Content-Type": "application/json",
@@ -429,8 +463,8 @@ export async function GET(request, { params }) {
       });
 
       if (!response.ok) {
-        const errorText = await response.text();
-        console.log(`Error fetching models from ${connection.provider}:`, errorText);
+        try { await response.body?.cancel(); } catch {}
+        logProviderModelsError(connection.provider, response.status);
         return NextResponse.json(
           { error: `Failed to fetch models: ${response.status}` },
           { status: response.status }
@@ -500,11 +534,11 @@ export async function GET(request, { params }) {
       fetchOptions.body = JSON.stringify(config.body);
     }
 
-    const response = await fetch(url, fetchOptions);
+    const response = await fetchProviderModels(url, fetchOptions);
 
     if (!response.ok) {
-      const errorText = await response.text();
-      console.log(`Error fetching models from ${connection.provider}:`, errorText);
+      try { await response.body?.cancel(); } catch {}
+      logProviderModelsError(connection.provider, response.status);
       return NextResponse.json(
         { error: `Failed to fetch models: ${response.status}` },
         { status: response.status }

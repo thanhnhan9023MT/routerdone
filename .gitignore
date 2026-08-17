@@ -1,6 +1,11 @@
 # RouterDone .gitignore
 # Dependencies
 node_modules/
+# KHÔNG có dấu / ở cuối: `node_modules/` chỉ khớp THƯ MỤC. Khi node_modules là một
+# SYMLINK (ví dụ trỏ sang cây khác để chạy test) thì nó là FILE → không bị ignore →
+# `git add -A` hút cả cây phụ thuộc vào commit (đã xảy ra 2026-08-17: 29.365 đường dẫn).
+node_modules
+node_modules.*
 .pnp
 .pnp.*
 

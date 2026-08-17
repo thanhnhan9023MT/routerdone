@@ -4,7 +4,6 @@ import { LEGACY_FILES, DB_DIR, DATA_FILE } from "./paths.js";
 import { TABLES, buildCreateTableSql } from "./schema.js";
 import { MIGRATIONS, latestVersion } from "./migrations/index.js";
 import { getMetaSync, setMetaSync } from "./helpers/metaStore.js";
-import { makeBackupDir, backupFile, pruneOldBackups } from "./backup.js";
 import { getAppVersion } from "./version.js";
 import { stringifyJson } from "./helpers/jsonCol.js";
 
@@ -237,9 +236,6 @@ export async function runMigrationOnce(adapter) {
 
   if (fresh && hasLegacy && !alreadyImported) {
     const t0 = Date.now();
-    const backupDir = makeBackupDir("migrate-from-json");
-    for (const f of Object.values(LEGACY_FILES)) backupFile(f, backupDir);
-
     try {
       adapter.transaction(() => {
         importLegacyMain(adapter, legacyMain);
@@ -251,15 +247,14 @@ export async function runMigrationOnce(adapter) {
       });
     } catch (err) {
       if (err instanceof MigrationAborted) {
-        console.error(`[DB][migrate] aborted: ${err.message} | legacy JSON kept | backup: ${backupDir}`);
+        console.error(`[DB][migrate] aborted: ${err.message} | legacy JSON kept`);
         return;
       }
       throw err;
     }
 
     try { fs.writeFileSync(MIGRATED_MARKER, new Date().toISOString()); } catch {}
-    pruneOldBackups();
-    console.log(`[DB][migrate] JSON → SQLite in ${Date.now() - t0}ms | legacy JSON kept at DATA_DIR | backup: ${backupDir}`);
+    console.log(`[DB][migrate] JSON → SQLite in ${Date.now() - t0}ms | legacy JSON kept at DATA_DIR`);
     return;
   }
 
@@ -272,15 +267,7 @@ export async function runMigrationOnce(adapter) {
   const oldVer = getMetaSync(adapter, "appVersion", null);
   const newVer = getAppVersion();
   if (oldVer && oldVer !== newVer) {
-    const backupDir = makeBackupDir(`upgrade-${oldVer}-to-${newVer}`);
-    try { backupFile(DATA_FILE, backupDir); } catch {}
     setMetaSync(adapter, "appVersion", newVer);
-    pruneOldBackups();
-    console.log(`[DB][migrate] App ${oldVer} → ${newVer} | schema ${migInfo.from} → ${migInfo.to} | backup: ${backupDir}`);
-  } else if (migInfo.applied > 0) {
-    // Schema upgrade without app version bump — still backup
-    const backupDir = makeBackupDir(`schema-${migInfo.from}-to-${migInfo.to}`);
-    try { backupFile(DATA_FILE, backupDir); } catch {}
-    pruneOldBackups();
+    console.log(`[DB][migrate] App ${oldVer} → ${newVer} | schema ${migInfo.from} → ${migInfo.to}`);
   }
 }

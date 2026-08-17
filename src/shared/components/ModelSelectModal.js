@@ -320,33 +320,15 @@ export default function ModelSelectModal({
             value: `${nodePrefix}/${fullModel.replace(`${providerId}/`, "")}`,
           }));
 
-        const registryModels = availableModels
-          .filter((model) => model.provider === providerId || model.provider === nodePrefix)
-          .map((model) => ({
-            id: model.model || model.id,
-            name: model.alias || model.model || model.id,
-            value: model.fullModel || `${nodePrefix}/${model.model || model.id}`,
-            kind: getModelKind(model),
-            isLive: true,
-          }));
+        // Also merge custom models registered via "Add Model" button (scope: customModels)
+        const customAliasIds = new Set(nodeModels.map(m => m.id));
+        const customNodeModels = customModels
+          .filter(m => m.providerAlias === providerId && !customAliasIds.has(m.id))
+          .map(m => ({ id: m.id, name: m.name || m.id, value: `${nodePrefix}/${m.id}`, isCustom: true }));
 
-        const registeredCustomModels = customModels
-          .filter((model) => model.providerAlias === providerId || model.providerAlias === nodePrefix)
-          .map((model) => ({
-            id: model.id,
-            name: model.name || model.id,
-            value: `${nodePrefix}/${model.id}`,
-            kind: getModelKind(model),
-            isCustom: true,
-          }));
+        const mergedNodeModels = [...nodeModels, ...customNodeModels];
 
-        const liveNodeModels = mergeLiveModels(
-          providerId,
-          nodePrefix,
-          [...nodeModels, ...registryModels, ...registeredCustomModels],
-          connection?.id || connection?.connectionId,
-          { forceAliasPrefix: true }
-        );
+        const liveNodeModels = mergeLiveModels(providerId, nodePrefix, mergedNodeModels, connection?.id || connection?.connectionId, { forceAliasPrefix: true });
 
         // Always show compatible providers that are connected, even with no aliases.
         // Prefer live /models output; fall back to placeholder when the provider cannot list models.
@@ -364,7 +346,7 @@ export default function ModelSelectModal({
           unavailable: providerUnavailable,
           models: modelsToShow.map((model) => ({ ...model, unavailable: providerUnavailable })),
           isCustom: true,
-          hasModels: nodeModels.length > 0,
+          hasModels: (nodeModels.length + customNodeModels.length) > 0,
         };
       } else {
         const hardcodedModels = getModelsByProviderId(providerId);

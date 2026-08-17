@@ -63,6 +63,16 @@ const DEFAULT_SETTINGS = {
   modelRedirects: {
     "gpt-5.4-mini": "helper.fallback",
   },
+  // Vision Bridge (Tools tab) — auto-polyfill images for non-vision models.
+  // visionPreprocessingEnabled defaults to true to preserve legacy behaviour;
+  // the Tools toggle lets the user turn the whole bridge off. visionModel is
+  // hard-pinned to the only free vision model (oc/mimo-v2.5-free); paid vision
+  // models must never be selectable. maxTokens controls the loopback budget;
+  // uiUxOverride swaps the OCR+caption prompt for a UI/UX design analysis.
+  visionPreprocessingEnabled: true,
+  visionPreprocessingModel: "oc/mimo-v2.5-free",
+  visionMaxTokens: 1024,
+  visionUiUxOverride: false,
 };
 
 async function readRaw() {

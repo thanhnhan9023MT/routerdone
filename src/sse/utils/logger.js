@@ -1,4 +1,14 @@
 // Logger utility for cloud
+//
+// Log level resolution (highest priority first):
+//   1. LOG_LEVEL env (DEBUG|INFO|WARN|ERROR)
+//   2. NODE_ENV=production -> WARN (only warn+error; cuts verbose per-request
+//      AUTH/ROUTING/FORMAT/MODALITY/CTX-GUARD/HEADROOM/CAVEMAN noise that was
+//      spiking CPU on loaded deploys via consoleLogBuffer + stdout I/O)
+//   3. otherwise (dev) -> DEBUG (full verbose output for local debugging)
+//
+// Override to DEBUG at runtime with LOG_LEVEL=DEBUG when you need verbose
+// diagnostics on a production deploy.
 
 const LOG_LEVELS = {
   DEBUG: 0,
@@ -7,7 +17,16 @@ const LOG_LEVELS = {
   ERROR: 3
 };
 
-const LEVEL = LOG_LEVELS.DEBUG;
+function resolveLevel() {
+  const env = (typeof process !== "undefined" && process.env?.LOG_LEVEL || "").toUpperCase();
+  if (env in LOG_LEVELS) return LOG_LEVELS[env];
+  // Production ships quiet by default to avoid CPU/IO pressure under load.
+  // Dev keeps verbose output for local debugging.
+  if (typeof process !== "undefined" && process.env?.NODE_ENV === "production") return LOG_LEVELS.WARN;
+  return LOG_LEVELS.DEBUG;
+}
+
+const LEVEL = resolveLevel();
 
 function formatTime() {
   return new Date().toLocaleTimeString("en-US", { hour12: false });
@@ -72,4 +91,9 @@ export function maskKey(key) {
   if (!key || key.length < 8) return "***";
   return `${key.slice(0, 4)}...${key.slice(-4)}`;
 }
+
+// Expose resolved level for callers that build their own log lines (e.g.
+// chatCore direct console.log guards) so they can honour the same gate.
+export const CURRENT_LOG_LEVEL = LEVEL;
+export { LOG_LEVELS };
 

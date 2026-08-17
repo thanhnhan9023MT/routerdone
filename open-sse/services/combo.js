@@ -7,8 +7,9 @@ import { parseResetAfterText, parseRetryAfterHeader, unavailableResponse } from 
 import { isImmediateFallbackStatus, isRetryableTransientStatus, resolveRoutePolicy } from "./routePolicy.js";
 import { getCapabilitiesForModel } from "../providers/capabilities.js";
 import { extractTextContent } from "../translator/formats/gemini.js";
-import { MODEL_FAILURE_BACKOFF_MAX_MS } from "../config/errorConfig.js";
+import { MODEL_FAILURE_BACKOFF_MAX_MS, PROVIDER_SELF_HEAL_COOLDOWN_MS_DEFAULT } from "../config/errorConfig.js";
 import { COMBO_REASONING_STREAM_FIRST_PRODUCTIVE_TIMEOUT_MS, COMBO_UNIFY_RESPONSE_MODEL } from "../config/runtimeConfig.js";
+import { parseSSEToOpenAIResponse } from "../handlers/chatCore/sseToJsonHandler.js";
 
 // Hard capabilities = input modalities; missing one drops request data (e.g. image
 // stripped). Must be prioritized. Soft (e.g. search) only degrades a feature.
@@ -43,9 +44,22 @@ function isSlowReasoningAttempt(body, modelStr) {
   // Give it the longer first-productive (idle) tolerance so a slow thinker isn't
   // cut to fallback at the 9s default. A member that sends NO bytes at all is
   // still cut fast by firstByteTimeoutMs (3s), so a dead member fails quickly.
-  return ["high", "xhigh"].includes(effort)
+  if (["high", "xhigh"].includes(effort)
     || /(?:thinking|reasoning|xhigh)/i.test(model)
-    || COMBO_REASONING_FLOOR_RE.test(model);
+    || COMBO_REASONING_FLOOR_RE.test(model)) return true;
+  // Also honor the model's declared reasoning capability. Names like
+  // "grok-4.5" / "glm-5.1" / "deepseek-v4-flash" carry no reasoning keyword and
+  // clients often omit reasoning_effort, yet these models prefill slowly. Read
+  // the capability flag so they get the longer reasoning timeout instead of the
+  // 9s combo default (root cause of ttft=0 aborts at ~12s).
+  const slash = typeof modelStr === "string" ? modelStr.indexOf("/") : -1;
+  const provider = slash > 0 ? modelStr.slice(0, slash) : "";
+  const modelId = slash > 0 ? modelStr.slice(slash + 1) : modelStr;
+  try {
+    const caps = getCapabilitiesForModel(provider, modelId);
+    if (caps?.reasoning === true) return true;
+  } catch { /* capability lookup best-effort; fall through to false */ }
+  return false;
 }
 
 function withModelStreamPolicy(baseStreamPolicy, body, modelStr, reasoningTimeoutMs, perNodeTimeoutMs) {
@@ -120,6 +134,21 @@ function markComboCooldown(modelStr, fixedMs = null) {
   const backoffMs = Math.min(baseMs * Math.pow(2, nextCount - 1), MODEL_FAILURE_BACKOFF_MAX_MS);
   const until = now + backoffMs;
   comboModelCooldowns.set(modelStr, until);
+  return until;
+}
+
+// Short fixed cooldown for self-heal errors (empty stream, headers timeout,
+// provider-surface issues). Unlike markComboCooldown, this does NOT bump the
+// exponential failure counter — the provider is expected to recover quickly
+// and should not be deprioritized for long. Pattern borrowed from OmniRoute's
+// comboCooldownRetry classification: transient errors get a short window,
+// permanent errors get exponential backoff.
+function markComboSelfHealCooldown(modelStr) {
+  const now = Date.now();
+  const until = now + PROVIDER_SELF_HEAL_COOLDOWN_MS_DEFAULT;
+  comboModelCooldowns.set(modelStr, until);
+  // Do NOT touch comboModelFailures — counter stays at current value so the
+  // next real failure still starts fresh at the base window.
   return until;
 }
 
@@ -985,7 +1014,8 @@ export async function handleComboChat({ body, models, comboOutputModel = null, c
       }
 
       // Check if should fallback to next model
-      const { shouldFallback, cooldownMs } = checkFallbackError(result.status, errorText);
+      // selfHeal: từ upstream v0.5.16x — lỗi tự lành (stream rỗng, headers timeout)
+      const { shouldFallback, cooldownMs, selfHeal } = checkFallbackError(result.status, errorText);
 
       if (!shouldFallback) {
         // A "no-fallback" status (a client-payload 400 — e.g. grok's "does not support
@@ -1016,14 +1046,20 @@ export async function handleComboChat({ body, models, comboOutputModel = null, c
         ? "connection_busy_short"
         : isAuthLockedComboError(errorBody)
           ? "auth_model_locked"
-          : isPreflightTimeoutText(errorText)
-            ? "preflight_timeout"
-            : isTempUnavail
-              ? "temp_unavailable_short"
-              : "fallback_error";
+          : selfHeal
+            ? "self_heal"
+            : isPreflightTimeoutText(errorText)
+              ? "preflight_timeout"
+              : isTempUnavail
+                ? "temp_unavailable_short"
+                : "fallback_error";
       // Transient capacity blip → short fixed cooldown so the primary isn't sidelined
       // for the full 30s window (keeps euro fable as primary; see D-option fix).
-      const cooldownUntil = markComboCooldown(modelStr, isTempUnavail ? COMBO_TEMP_UNAVAIL_COOLDOWN_MS : null);
+      // selfHeal dùng cooldown ngắn KHÔNG bump bộ đếm thất bại (upstream);
+      // còn lại giữ đường fixedMs của fork cho blip capacity / hết slot.
+      const cooldownUntil = selfHeal
+        ? markComboSelfHealCooldown(modelStr)
+        : markComboCooldown(modelStr, isTempUnavail ? COMBO_TEMP_UNAVAIL_COOLDOWN_MS : null);
       if (cooldownUntil) {
         log.warn("COMBO", `${comboLogPrefix} | cooldown model=${modelStr} until=${formatConsoleTimeGmt7(cooldownUntil)} reason=${cooldownReason}`, { status: result.status, cooldownMs });
       }
@@ -1080,6 +1116,7 @@ function extractPanelText(json) {
     const msg = choice.message ?? choice.delta ?? {};
     const t = extractTextContent(msg.content);
     if (t.trim()) return t;
+    if (typeof msg.reasoning_content === "string" && msg.reasoning_content.trim()) return msg.reasoning_content;
     if (typeof choice.text === "string" && choice.text.trim()) return choice.text;
   }
 
@@ -1103,6 +1140,15 @@ function extractPanelText(json) {
   }
 
   return "";
+}
+
+async function readPanelResponseJSON(res, model) {
+  const contentType = res.headers?.get?.("content-type") || "";
+  if (contentType.includes("text/event-stream")) {
+    const rawSSE = await res.clone().text();
+    return parseSSEToOpenAIResponse(rawSSE, model);
+  }
+  return res.clone().json();
 }
 
 /**
@@ -1162,10 +1208,22 @@ const FUSION_DEFAULTS = {
 // Resolve a Response (or {__error}) within ms; the loser keeps running but is ignored.
 function withTimeout(promise, ms) {
   return new Promise((resolve) => {
-    const t = setTimeout(() => resolve({ __timeout: true }), ms);
+    let lost = false;
+    const t = setTimeout(() => { lost = true; resolve({ __timeout: true }); }, ms);
     Promise.resolve(promise)
-      .then((v) => { clearTimeout(t); resolve(v); })
-      .catch((e) => { clearTimeout(t); resolve({ __error: e }); });
+      .then((v) => {
+        clearTimeout(t);
+        if (!lost) return resolve(v);
+        // Loser arrived after the panel moved on. Its body MUST be cancelled, not just
+        // dropped: since the panel fan-out streams (stream:true), the response is SSE and
+        // handlers/chat.js holds that member's per-connection concurrency slot until the
+        // body closes. Nobody reads a loser, so without this the slot stays occupied until
+        // the idle sweep — and with maxConcurrentPerConnection=1 that is a credential
+        // taken out of rotation for minutes. cancel() reaches the wrapper's cancel() hook,
+        // which releases the slot.
+        v?.body?.cancel?.().catch(() => {});
+      })
+      .catch((e) => { clearTimeout(t); if (!lost) resolve({ __error: e }); });
   });
 }
 
@@ -1256,9 +1314,11 @@ export async function handleFusionChat({ body, models, handleSingleModel, log, c
   const judge = judgeModel && judgeModel.trim() ? judgeModel.trim() : panel[0];
   log.info("FUSION", `Combo "${comboName}" | panel=${panel.length} [${panel.join(", ")}] | judge=${judge} | quorum=${minPanel}`);
 
-  // 1. Fan out to the panel in parallel: non-streaming, tools stripped (we want prose).
+  // 1. Fan out to the panel in parallel. Use streaming so heavy panel prompts
+  // produce bytes early instead of timing out as non-streaming requests. Panel
+  // responses are normalized back to JSON before extractPanelText below.
   const { tools, tool_choice, ...rest } = body;
-  const panelBody = { ...rest, stream: false };
+  const panelBody = { ...rest, stream: true };
 
   // Flatten tool turns to prose so panel models keep context without emitting tool_calls.
   if (Array.isArray(panelBody.messages)) {
@@ -1292,7 +1352,7 @@ export async function handleFusionChat({ body, models, handleSingleModel, log, c
     if (res.__error) { log.warn("FUSION", `Panel ${model} threw`, { error: res.__error?.message || String(res.__error) }); continue; }
     if (!res.ok) { log.warn("FUSION", `Panel ${model} failed`, { status: res.status }); continue; }
     try {
-      const json = await res.clone().json();
+      const json = await readPanelResponseJSON(res, model);
       const text = extractPanelText(json);
       if (text) {
         answers.push({ model, text, response: res });

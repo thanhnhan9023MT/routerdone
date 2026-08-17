@@ -42,6 +42,13 @@ async function getObservabilityConfig() {
 let writeBuffer = [];
 let flushTimer = null;
 let isFlushing = false;
+// Count of records written since the last trim. Avoids running a COUNT(*)
+// over the whole table on every flush (which was a top CPU contributor on
+// loaded deploys where flush fires per combo-attempt batch). We trim only
+// when the running count exceeds the cap, and the cheap DELETE uses the
+// idx_rd_ts index (timestamp ASC) so no full table scan.
+let recordsSinceTrim = 0;
+let trimCheckPending = false;
 
 function sanitizeHeaders(headers) {
   if (!headers || typeof headers !== "object") return {};
@@ -60,12 +67,16 @@ function generateDetailId(model) {
   return `${timestamp}-${random}-${modelPart}`;
 }
 
+// Size-cap a single JSON field. Avoids the double-stringify that the old
+// implementation did (stringify to measure, then stringify again at insert).
 function truncateField(obj, maxSize) {
-  const str = JSON.stringify(obj || {});
-  if (str.length > maxSize) {
-    return { _truncated: true, _originalSize: str.length, _preview: str.substring(0, 200) };
-  }
-  return obj || {};
+  if (obj == null) return {};
+  // Cheap fast-path: small objects skip the measurement stringify entirely.
+  // Most request/response fields are well under the cap, so this avoids the
+  // bulk of the per-attempt JSON.stringify cost under load.
+  const str = JSON.stringify(obj);
+  if (str.length <= maxSize) return obj;
+  return { _truncated: true, _originalSize: str.length, _preview: str.substring(0, 200) };
 }
 
 async function flushToDatabase() {
@@ -107,12 +118,25 @@ async function flushToDatabase() {
           );
         }
 
-        const cnt = db.get(`SELECT COUNT(*) as c FROM requestDetails`);
-        if (cnt && cnt.c > config.maxRecords) {
-          db.run(
-            `DELETE FROM requestDetails WHERE id IN (SELECT id FROM requestDetails ORDER BY timestamp ASC LIMIT ?)`,
-            [cnt.c - config.maxRecords]
-          );
+        // Cheap trimming: only run the cleanup when the running insert count
+        // suggests we might be over the cap. DELETE uses idx_rd_ts (timestamp
+        // ASC) so it is index-bounded, not a full scan. This replaces the
+        // per-flush COUNT(*) that scanned the whole table on every batch.
+        recordsSinceTrim += items.length;
+        if (recordsSinceTrim >= config.maxRecords && !trimCheckPending) {
+          trimCheckPending = true;
+          try {
+            const cnt = db.get(`SELECT COUNT(*) as c FROM requestDetails`);
+            if (cnt && cnt.c > config.maxRecords) {
+              db.run(
+                `DELETE FROM requestDetails WHERE id IN (SELECT id FROM requestDetails ORDER BY timestamp ASC LIMIT ?)`,
+                [cnt.c - config.maxRecords]
+              );
+            }
+          } finally {
+            recordsSinceTrim = 0;
+            trimCheckPending = false;
+          }
         }
       });
     }

@@ -6,6 +6,7 @@ import {
   DIRECT_STREAM_TOTAL_BUDGET_MS,
   COMBO_STREAM_FIRST_BYTE_TIMEOUT_MS,
   COMBO_STREAM_FIRST_PRODUCTIVE_TIMEOUT_MS,
+  COMBO_REASONING_STREAM_FIRST_PRODUCTIVE_TIMEOUT_MS,
   COMBO_STREAM_IDLE_AFTER_PRODUCTIVE_MS,
   COMBO_STREAM_TOTAL_BUDGET_MS,
   FUSION_STREAM_FIRST_BYTE_TIMEOUT_MS,
@@ -72,9 +73,15 @@ export function isRetryableTransientStatus(status) {
 
 export function adaptiveFirstProductiveTimeoutMs(routeMode, fallbackMs, stats = null) {
   // Clamp even without stats so saved per-combo overrides cannot inflate the
-  // attempt deadline above what the route mode actually tolerates.
+  // attempt deadline above what the route mode actually tolerates. The combo
+  // ceiling must accommodate the reasoning cap: a reasoning model with no
+  // fallback is deliberately given COMBO_REASONING_STREAM_FIRST_PRODUCTIVE_
+  // TIMEOUT_MS by withModelStreamPolicy, and a 12s cap here would silently
+  // shrink it back — the root cause of grok-4.5 "Upstream headers timeout"
+  // aborts on large-context (Claude Code) requests that need >15s to prefill.
+  const comboMax = Math.max(12000, COMBO_REASONING_STREAM_FIRST_PRODUCTIVE_TIMEOUT_MS);
   const bounds = routeMode === "combo"
-    ? { min: 4000, max: 300000 }
+    ? { min: 4000, max: comboMax }
     : routeMode === "fusion"
       ? { min: 3000, max: 8000 }
       : { min: 5000, max: fallbackMs };

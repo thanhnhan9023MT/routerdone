@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
-import { Card, Button } from "@/shared/components";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Button, Card } from "@/shared/components";
 import { CONSOLE_LOG_CONFIG } from "@/shared/constants/config";
 
 const RETENTION_OPTIONS = [
@@ -12,35 +12,18 @@ const RETENTION_OPTIONS = [
   { value: "0", label: "Off" },
 ];
 
-const LOG_LEVEL_COLORS = {
-  LOG: "text-green-400",
-  INFO: "text-blue-400",
-  WARN: "text-yellow-400",
-  ERROR: "text-red-400",
-  DEBUG: "text-purple-400",
-};
-
-function colorLine(line) {
-  const match = line.match(/\[(\w+)\]/g);
-  const levelTag = match ? match[1]?.replace(/\[|\]/g, "") : null;
-  const color = LOG_LEVEL_COLORS[levelTag] || "text-green-400";
-  return <span className={color}>{line}</span>;
-}
-
 function getBrowserTimeZone() {
-  try {
-    return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
-  } catch {
-    return "UTC";
-  }
+  try { return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"; }
+  catch { return "UTC"; }
 }
 
 function normalizeLogEntry(entry) {
-  if (typeof entry === "string") return { line: entry, createdAt: null };
-  if (!entry || typeof entry !== "object") return { line: String(entry ?? ""), createdAt: null };
+  if (typeof entry === "string") return { line: entry, createdAt: null, request: null };
+  if (!entry || typeof entry !== "object") return { line: String(entry ?? ""), createdAt: null, request: null };
   return {
     line: typeof entry.line === "string" ? entry.line : String(entry.line ?? ""),
     createdAt: Number.isFinite(Number(entry.createdAt)) ? Number(entry.createdAt) : null,
+    request: entry.request && typeof entry.request === "object" ? entry.request : null,
   };
 }
 
@@ -48,42 +31,30 @@ function formatClock(createdAt, timeZone) {
   if (!createdAt) return null;
   try {
     const parts = new Intl.DateTimeFormat("en-GB", {
-      timeZone,
-      hour12: false,
-      hourCycle: "h23",
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
+      timeZone, hour12: false, hourCycle: "h23",
+      hour: "2-digit", minute: "2-digit", second: "2-digit",
     }).formatToParts(new Date(createdAt));
-    const get = (type) => parts.find((part) => part.type === type)?.value;
-    return `${get("hour")}:${get("minute")}:${get("second")}`;
-  } catch {
-    return null;
-  }
+    const get = (t) => parts.find((p) => p.type === t)?.value;
+    return get("hour") + ":" + get("minute") + ":" + get("second");
+  } catch { return null; }
 }
 
 function formatDisplayLine(entry, timeZone) {
-  const normalized = normalizeLogEntry(entry);
-  const localClock = formatClock(normalized.createdAt, timeZone);
-  if (!localClock) return normalized.line;
-  return normalized.line.replace(/^\[\d{2}:\d{2}:\d{2}\]/, `[${localClock}]`);
+  const n = normalizeLogEntry(entry);
+  const c = formatClock(n.createdAt, timeZone);
+  return c ? "[" + c + "] " + n.line : n.line;
 }
 
-const handleDownload = (logs, timeZone) => {
-  const content = logs.map((line) => formatDisplayLine(line, timeZone)).join("\n");
-  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-  const blob = new Blob([content ? `${content}\n` : ""], { type: "text/plain;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = `routerdone-console-log-${timestamp}.txt`;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  URL.revokeObjectURL(url);
+// ── Error Fix Settings panel ──
+
+const ERROR_FIX_DEFAULTS = {
+  selfHealCooldownMs: 3000,
+  busyCooldownMs: 30000,
+  consecutiveErrorsBeforeBan: 3,
+  softBanDurationMs: 30000,
+  longBanDurationMs: 1800000,
+  maxRateLimitCooldownMs: 1800000,
 };
-
-
 
 function ErrorFixSettings({ settings, onSave }) {
   const [cfg, setCfg] = useState(() => ({ ...ERROR_FIX_DEFAULTS, ...(settings?.errorFix || {}) }));
@@ -238,7 +209,7 @@ function LogRow({ entry, timeZone, compact }) {
         <span className="text-sky-300 tabular-nums">{output}</span>
         {reasoning > 0 && <span className="text-purple-400/50 tabular-nums text-[9px] ml-0.5">+{reasoning}t</span>}
         {cacheCreate > 0 && <span className="text-amber-400/50 tabular-nums text-[9px] ml-0.5">w{cacheCreate}</span>}
-        {rtk && <span className="text-amber-400/40 text-[9px] ml-1">🔻{rtk}</span>}
+        {rtk && <span className="text-amber-400/40 text-[9px] ml-1">&#x1F53B;{rtk}</span>}
       </td>
     </tr>
   );
@@ -249,125 +220,213 @@ function LogRow({ entry, timeZone, compact }) {
 export default function ConsoleLogClient() {
   const [logs, setLogs] = useState([]);
   const [timeZone] = useState(getBrowserTimeZone);
-  const [connected, setConnected] = useState(false);
   const [retentionMs, setRetentionMs] = useState(String(CONSOLE_LOG_CONFIG.defaultRetentionMs));
   const [savingRetention, setSavingRetention] = useState(false);
-  const logRef = useRef(null);
+  const [settings, setSettings] = useState(null);
+  const [providerNames, setProviderNames] = useState({});
+  const consoleLogRef = useRef(null);
+  const errorLogRef = useRef(null);
+  const autoScrollConsole = useRef(true);
+  const autoScrollError = useRef(true);
 
-  const handleClear = async () => {
-    try {
-      await fetch("/api/translator/console-logs", { method: "DELETE" });
-      // UI syncs via SSE after keeping the last 5 minutes.
-    } catch (err) {
-      console.error("Failed to clear console logs:", err);
-    }
-  };
-
-  const handleRetentionChange = async (event) => {
-    const next = event.target.value;
-    setRetentionMs(next);
-    setSavingRetention(true);
-    try {
-      const res = await fetch("/api/settings", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ consoleLogRetentionMs: Number(next) }),
-      });
-      if (!res.ok) throw new Error("Failed to update retention");
-    } catch (err) {
-      console.error("Failed to update console log retention:", err);
-    } finally {
-      setSavingRetention(false);
-    }
-  };
-
+  // Fetch settings + provider node names
   useEffect(() => {
     let alive = true;
-    fetch("/api/settings", { cache: "no-store" })
-      .then((res) => res.ok ? res.json() : null)
-      .then((settings) => {
-        if (!alive || !settings) return;
-        setRetentionMs(String(settings.consoleLogRetentionMs ?? CONSOLE_LOG_CONFIG.defaultRetentionMs));
-      })
-      .catch((err) => console.error("Failed to load console log settings:", err));
+    Promise.all([
+      fetch("/api/settings", { cache: "no-store" }).then(r => r.ok ? r.json() : null),
+      fetch("/api/provider-nodes", { cache: "no-store" }).then(r => r.ok ? r.json() : null),
+      fetch("/api/providers", { cache: "no-store" }).then(r => r.ok ? r.json() : null),
+    ]).then(([s, nodesData, providersData]) => {
+      if (!alive) return;
+      if (s) {
+        setSettings(s);
+        setRetentionMs(String(s.consoleLogRetentionMs ?? CONSOLE_LOG_CONFIG.defaultRetentionMs));
+      }
+      // Build provider name map: providerId → readable name
+      const nameMap = {};
+      // From provider nodes (openai-compatible, anthropic-compatible, custom-embedding)
+      if (nodesData?.nodes) {
+        for (const node of nodesData.nodes) {
+          if (node.id && node.name) nameMap[node.id] = node.name;
+        }
+      }
+      // From provider connections (regular providers have name)
+      if (providersData?.connections) {
+        for (const conn of providersData.connections) {
+          if (conn.provider && conn.name) {
+            // Only override if we don't already have a node name
+            if (!nameMap[conn.provider]) nameMap[conn.provider] = conn.name;
+          }
+        }
+      }
+      setProviderNames(nameMap);
+    }).catch(() => {});
     return () => { alive = false; };
   }, []);
 
+  // SSE stream for console logs
   useEffect(() => {
     const es = new EventSource("/api/translator/console-logs/stream");
-
-    es.onopen = () => setConnected(true);
-
-    es.onmessage = (e) => {
-      const msg = JSON.parse(e.data);
-      if (msg.type === "init") {
+    es.onmessage = (event) => {
+      const msg = JSON.parse(event.data);
+      if (msg.type === "init" || msg.type === "sync") {
         setLogs((msg.logs || []).map(normalizeLogEntry).slice(-CONSOLE_LOG_CONFIG.maxLines));
       } else if (msg.type === "line") {
-        setLogs((prev) => {
-          const next = [...prev, normalizeLogEntry(msg.entry ?? msg.line)];
-          return next.length > CONSOLE_LOG_CONFIG.maxLines ? next.slice(-CONSOLE_LOG_CONFIG.maxLines) : next;
-        });
+        setLogs(cur => [...cur, normalizeLogEntry(msg.entry ?? msg.line)].slice(-CONSOLE_LOG_CONFIG.maxLines));
       } else if (msg.type === "clear") {
         setLogs([]);
-      } else if (msg.type === "sync") {
-        setLogs((msg.logs || []).map(normalizeLogEntry).slice(-CONSOLE_LOG_CONFIG.maxLines));
       }
     };
-
-    es.onerror = () => setConnected(false);
-
     return () => es.close();
   }, []);
 
-  // Auto-scroll to bottom on new logs
+  // Apply provider name mapping to entries
+  const resolvedLogs = useMemo(() => {
+    if (Object.keys(providerNames).length === 0) return logs;
+    return logs.map(entry => {
+      const n = normalizeLogEntry(entry);
+      if (n.request && n.request.provider && providerNames[n.request.provider] && !n.request.displayProvider) {
+        return {
+          ...entry,
+          request: { ...n.request, displayProvider: providerNames[n.request.provider] },
+        };
+      }
+      return entry;
+    });
+  }, [logs, providerNames]);
+
   useEffect(() => {
-    if (!logRef.current) return;
-    logRef.current.scrollTop = logRef.current.scrollHeight;
-  }, [logs]);
+    if (autoScrollConsole.current && consoleLogRef.current) {
+      consoleLogRef.current.scrollTop = consoleLogRef.current.scrollHeight;
+    }
+    if (autoScrollError.current && errorLogRef.current) {
+      errorLogRef.current.scrollTop = errorLogRef.current.scrollHeight;
+    }
+  }, [resolvedLogs]);
+
+  const handleScrollConsole = () => {
+    if (!consoleLogRef.current) return;
+    const { scrollTop, scrollHeight, clientHeight } = consoleLogRef.current;
+    autoScrollConsole.current = (scrollHeight - scrollTop - clientHeight) < 40;
+  };
+
+  const handleScrollError = () => {
+    if (!errorLogRef.current) return;
+    const { scrollTop, scrollHeight, clientHeight } = errorLogRef.current;
+    autoScrollError.current = (scrollHeight - scrollTop - clientHeight) < 40;
+  };
+
+  const allEntries = useMemo(() => resolvedLogs.filter(e => normalizeLogEntry(e).request), [resolvedLogs]);
+  const errorEntries = useMemo(() => allEntries.filter(e => Number(e.request?.status) >= 400), [allEntries]);
+
+  const handleClear = async () => {
+    try { await fetch("/api/translator/console-logs", { method: "DELETE" }); } catch { /* ignore */ }
+  };
+
+  const handleDownload = () => {
+    const content = logs.map(e => formatDisplayLine(e, timeZone)).join("\n");
+    const blob = new Blob([content ? content + "\n" : ""], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "routerdone-console-log-" + new Date().toISOString().replace(/[:.]/g, "-") + ".txt";
+    document.body.appendChild(link); link.click(); link.remove();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleRetentionChange = async (e) => {
+    const next = e.target.value;
+    setRetentionMs(next);
+    setSavingRetention(true);
+    try {
+      await fetch("/api/settings", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ consoleLogRetentionMs: Number(next) }) });
+    } catch { /* ignore */ }
+    finally { setSavingRetention(false); }
+  };
+
+  const errorGroups = useMemo(() => {
+    const groups = {};
+    for (const entry of errorEntries) {
+      const r = entry.request;
+      const key = (r.status ?? "?") + "|" + (r.model || "?");
+      if (!groups[key]) groups[key] = { status: r.status, model: r.model, count: 0 };
+      groups[key].count++;
+    }
+    return Object.values(groups).sort((a, b) => b.count - a.count);
+  }, [errorEntries]);
 
   return (
-    <div className="">
+    <div>
       <Card>
-        <div className="flex flex-wrap items-center justify-end gap-2 px-4 pt-3 pb-2">
-          <label className="flex items-center gap-2 text-xs font-medium text-text-muted">
-            <span className="whitespace-nowrap">Auto-delete</span>
-            <span className="relative inline-flex items-center">
-              <select
-                value={retentionMs}
-                onChange={handleRetentionChange}
-                disabled={savingRetention}
-                className="h-7 w-32 appearance-none rounded-[8px] border border-border bg-surface-2 py-1 pl-3 pr-8 text-xs font-semibold text-text-main outline-none transition-all focus:border-brand-500/50 focus:ring-2 focus:ring-brand-500/20 disabled:opacity-50"
-              >
-                {RETENTION_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-              <span className="material-symbols-outlined pointer-events-none absolute right-2 text-[18px] text-text-muted">expand_more</span>
+        {/* Top bar: controls */}
+        <div className="flex flex-wrap items-center justify-between gap-2 px-4 pt-3 pb-2">
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-bold text-text-main">Console Log</span>
+            <span className="text-[11px] text-text-muted">
+              {allEntries.length} requests / {logs.length} lines
             </span>
-          </label>
-          <Button size="sm" variant="outline" icon="download" onClick={() => handleDownload(logs, timeZone)} disabled={logs.length === 0}>
-            Download
-          </Button>
-          <Button size="sm" variant="outline" icon="delete" onClick={handleClear}>
-            Clear old
-          </Button>
+          </div>
+          <div className="flex items-center gap-2">
+            <label className="flex items-center gap-2 text-xs font-medium text-text-muted">
+              <span>Auto-delete</span>
+              <select value={retentionMs} onChange={handleRetentionChange} disabled={savingRetention} className="h-7 rounded-[8px] border border-border bg-surface-2 px-3 text-xs font-semibold text-text-main outline-none disabled:opacity-50">
+                {RETENTION_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </select>
+            </label>
+            <Button size="sm" variant="outline" icon="download" onClick={handleDownload} disabled={logs.length === 0}>Download</Button>
+            <Button size="sm" variant="outline" icon="delete" onClick={handleClear}>Clear</Button>
+          </div>
         </div>
-        <div
-          ref={logRef}
-          className="bg-black rounded-b-lg p-4 text-xs font-mono h-[calc(100vh-220px)] overflow-y-auto"
-        >
-          {logs.length === 0 ? (
-            <span className="text-text-muted">No console logs yet.</span>
-          ) : (
-            <div className="space-y-0.5">
-              {logs.map((line, i) => (
-                <div key={i}>{colorLine(formatDisplayLine(line, timeZone))}</div>
-              ))}
+
+        {/* Two logs side-by-side */}
+        <div className="flex gap-0 border-t border-border">
+          {/* Console Log (left) */}
+          <div className="flex-1 min-w-0 border-r border-border">
+            <div className="px-4 py-1.5 border-b border-border/50 bg-black">
+              <span className="text-[10px] font-bold text-text-muted uppercase tracking-wider">Console Log</span>
+              <span className="text-[10px] text-text-muted ml-2 tabular-nums">{allEntries.length} reqs</span>
             </div>
-          )}
+            <div ref={consoleLogRef} onScroll={handleScrollConsole} className="bg-black overflow-auto" style={{ height: "calc(100vh - 400px)" }}>
+              {allEntries.length === 0 ? (
+                <div className="p-4 text-xs text-text-muted">No logs yet.</div>
+              ) : (
+                <LogTable entries={allEntries} timeZone={timeZone} compact={false} />
+              )}
+            </div>
+          </div>
+
+          {/* Error Log (right) */}
+          <div className="w-[360px] flex-none">
+            <div className="px-4 py-1.5 border-b border-border/50 bg-black">
+              <span className="text-[10px] font-bold text-red-400 uppercase tracking-wider">Error Log</span>
+              <span className="text-[10px] text-text-muted ml-2 tabular-nums">{errorEntries.length} errors</span>
+            </div>
+            {/* Error badges */}
+            {errorGroups.length > 0 && (
+              <div className="flex flex-wrap items-center gap-1.5 px-3 py-1.5 border-b border-border/50 bg-black/50">
+                {errorGroups.map((g, i) => {
+                  const is5 = g.status >= 500;
+                  return (
+                    <div key={i} className={"flex items-center gap-1 rounded border px-1.5 py-0.5 text-[9px] font-bold " + (is5 ? "bg-red-500/15 border-red-500/30 text-red-300" : "bg-amber-500/15 border-amber-500/30 text-amber-300")}>
+                      <span>{g.status}</span>
+                      <span className="tabular-nums">x{g.count}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+            <div ref={errorLogRef} onScroll={handleScrollError} className="bg-black overflow-auto" style={{ height: "calc(100vh - " + (errorGroups.length > 0 ? "440" : "415") + "px)" }}>
+              {errorEntries.length === 0 ? (
+                <div className="p-4 text-xs text-text-muted">No errors. System healthy.</div>
+              ) : (
+                <LogTable entries={errorEntries} timeZone={timeZone} compact={true} />
+              )}
+            </div>
+          </div>
         </div>
+
+        {/* Error Fix Settings at the bottom */}
+        <ErrorFixSettings settings={settings} onSave={(cfg) => setSettings(prev => ({ ...prev, errorFix: cfg }))} />
       </Card>
     </div>
   );

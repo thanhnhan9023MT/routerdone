@@ -26,7 +26,16 @@ function processSSEMessage(msg, state) {
     state.responseId = parsed.response?.id || state.responseId;
     state.created = parsed.response?.created_at || state.created;
   } else if (eventType === "response.output_item.done") {
-    state.items.set(parsed.output_index ?? 0, parsed.item);
+    // Key by the item's own id when available so multiple items (e.g. a
+    // reasoning item + a message item) never collide on a missing/duplicate
+    // output_index. Fall back to output_index, then an append counter.
+    const item = parsed.item || {};
+    const key = item.id || (parsed.output_index != null ? `idx_${parsed.output_index}` : `seq_${state.items.size}`);
+    state.items.set(key, item);
+  } else if (eventType === "response.output_text.delta") {
+    // Accumulate visible answer text as a fallback in case no message item
+    // carries the content (some upstreams only stream it via deltas).
+    if (typeof parsed.delta === "string") state.textParts.push(parsed.delta);
   } else if (eventType === "response.completed" || eventType === "response.done") {
     state.status = "completed";
     if (parsed.response?.usage) {
@@ -60,7 +69,8 @@ export async function convertResponsesStreamToJson(stream) {
     created: Math.floor(Date.now() / 1000),
     status: "in_progress",
     usage: { ...EMPTY_RESPONSE },
-    items: new Map()
+    items: new Map(),
+    textParts: []
   };
 
   try {
@@ -85,11 +95,30 @@ export async function convertResponsesStreamToJson(stream) {
     reader.releaseLock();
   }
 
-  // Build output array from accumulated items (ordered by index)
-  const output = [];
-  const maxIndex = state.items.size > 0 ? Math.max(...state.items.keys()) : -1;
-  for (let i = 0; i <= maxIndex; i++) {
-    output.push(state.items.get(i) || { type: "message", content: [], role: "assistant" });
+  // Build output array from accumulated items, preserving arrival order.
+  const output = [...state.items.values()];
+
+  // Ensure there is an assistant message carrying visible text. If the upstream
+  // only streamed the answer via output_text.delta (no message item, or a
+  // message item with empty content), synthesize/repair one from textParts so
+  // downstream converters find the answer instead of only reasoning.
+  const streamedText = state.textParts.join("");
+  const hasMessageText = output.some((it) =>
+    it?.type === "message" && Array.isArray(it.content) &&
+    it.content.some((c) => typeof c?.text === "string" && c.text.length > 0)
+  );
+  if (!hasMessageText && streamedText.length > 0) {
+    const existingMsg = output.find((it) => it?.type === "message");
+    if (existingMsg) {
+      existingMsg.content = [{ type: "output_text", text: streamedText }];
+    } else {
+      output.push({ type: "message", role: "assistant", content: [{ type: "output_text", text: streamedText }] });
+    }
+  }
+
+  // Never return a fully empty output array.
+  if (output.length === 0) {
+    output.push({ type: "message", content: [], role: "assistant" });
   }
 
   return {

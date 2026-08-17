@@ -383,9 +383,7 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
 
   // SSE connection - lightweight live panel only; heavy stats stay on REST cache
   useEffect(() => {
-    const params = new URLSearchParams();
-    if (timeZone) params.set("tz", timeZone);
-    const es = new EventSource(`/api/usage/stream${params.size ? `?${params.toString()}` : ""}`);
+    const es = new EventSource("/api/usage/stream");
 
     es.onmessage = (e) => {
       try {
@@ -405,7 +403,7 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
     es.onerror = () => setLoading(false);
 
     return () => es.close();
-  }, [timeZone]);
+  }, []);
 
   // Periodic REST refresh so table stays fresh without SSE-driven recompute
   useEffect(() => {
