@@ -8,6 +8,7 @@ import { KiroExecutor } from "./kiro.js";
 import { CodexExecutor } from "./codex.js";
 import { CodexSaleCodexExecutor } from "./codex-sale-codex.js";
 import { CursorExecutor } from "./cursor.js";
+import { CursorAgentExecutor } from "./cursor-agent.js";
 import { VertexExecutor } from "./vertex.js";
 import { QwenExecutor } from "./qwen.js";
 import { OpenCodeExecutor } from "./opencode.js";
@@ -33,6 +34,8 @@ const executors = {
   "codex-sale-codex": new CodexSaleCodexExecutor(),
   cursor: new CursorExecutor(),
   cu: new CursorExecutor(), // Alias for cursor
+  "cursor-agent": new CursorAgentExecutor(),
+  ca: new CursorAgentExecutor(), // Alias for cursor-agent
   vertex: new VertexExecutor("vertex"),
   "vertex-partner": new VertexExecutor("vertex-partner"),
   qwen: new QwenExecutor(),

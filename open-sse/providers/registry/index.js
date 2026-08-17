@@ -23,6 +23,7 @@ import p20 from "./comfyui.js";
 import p21 from "./commandcode.js";
 import p22 from "./coqui.js";
 import p23 from "./cursor.js";
+import p23a from "./cursor-agent.js";
 import p24 from "./deepgram.js";
 import p25 from "./deepseek.js";
 import p26 from "./edge-tts.js";
@@ -128,6 +129,7 @@ export default [
   p21,
   p22,
   p23,
+  p23a,
   p24,
   p25,
   p26,

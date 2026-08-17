@@ -8,6 +8,7 @@ import { parseSSEToOpenAIResponse } from "./sseToJsonHandler.js";
 import { buildRequestDetail, extractRequestConfig, extractUsageFromResponse, saveUsageStats } from "./requestDetail.js";
 import { appendRequestLog, saveRequestDetail } from "@/lib/usageDb.js";
 import { decloakToolNames } from "../../utils/claudeCloaking.js";
+import { openaiChatToClaudeMessage } from "../../translator/response/openai-chat-to-claude-message.js";
 function stripThinkingTags(text) {
   if (typeof text !== "string") return text;
   return text.replace(/<thinking>[\s\S]*?<\/thinking>/gi, "").trim();
@@ -274,9 +275,18 @@ export async function handleNonStreamingResponse({ providerResponse, provider, m
     console.error("[RequestDetail] Failed to save:", err.message);
   });
 
+  // Client called /v1/messages (Claude format) but the pipeline normalizes to
+  // OpenAI. Convert so Anthropic clients get a real Messages response. Only for
+  // direct (non-combo) requests — combo/fusion consume OpenAI `choices`
+  // internally and convert their own final result at that layer.
+  let clientBody = translatedResponse;
+  if (sourceFormat === FORMATS.CLAUDE && !routeInfo?.comboName) {
+    clientBody = openaiChatToClaudeMessage(translatedResponse, model);
+  }
+
   return {
     success: true,
-    response: new Response(JSON.stringify(translatedResponse), {
+    response: new Response(JSON.stringify(clientBody), {
       headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
     })
   };

@@ -3,6 +3,7 @@ import { createErrorResult } from "../../utils/error.js";
 import { HTTP_STATUS } from "../../config/runtimeConfig.js";
 import { FORMATS } from "../../translator/formats.js";
 import { PROVIDERS } from "../../config/providers.js";
+import { openaiChatToClaudeMessage } from "../../translator/response/openai-chat-to-claude-message.js";
 import { buildRequestDetail, extractRequestConfig, saveUsageStats } from "./requestDetail.js";
 
 // Responses-API providers (e.g. codex) may emit SSE without content-type + use Responses output shape
@@ -248,7 +249,16 @@ export async function handleForcedSSEToJson({ providerResponse, sourceFormat, pr
       }
     }
 
-    return { success: true, response: new Response(JSON.stringify(parsed), { headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" } }) };
+    // Client called /v1/messages (Claude format) but we produced OpenAI JSON.
+    // Convert so Anthropic clients get a real Messages response (tool_use etc.).
+    // Only for direct (non-combo) requests — combo/fusion re-parse OpenAI
+    // `choices` internally and convert their own final result at that layer.
+    let outBody = parsed;
+    if (sourceFormat === FORMATS.CLAUDE && !routeInfo?.comboName) {
+      outBody = openaiChatToClaudeMessage(parsed, model);
+    }
+
+    return { success: true, response: new Response(JSON.stringify(outBody), { headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" } }) };
   } catch (err) {
     console.error("[ChatCore] Chat Completions SSE→JSON failed:", err);
     return createErrorResult(HTTP_STATUS.BAD_GATEWAY, "Failed to convert streaming response to JSON");
