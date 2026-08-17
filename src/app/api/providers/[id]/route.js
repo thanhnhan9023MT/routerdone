@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import {
   getProviderConnectionById,
+  getProviderConnections,
   getProxyPoolById,
   updateProviderConnection,
   deleteProviderConnection,
@@ -112,6 +113,21 @@ export async function PUT(request, { params }) {
     const existing = await getProviderConnectionById(id);
     if (!existing) {
       return NextResponse.json({ error: "Connection not found" }, { status: 404 });
+    }
+
+    // A node may hold one connection per API key (see the duplicate-key guard in
+    // ../route.js POST). Close the same hole on the edit path: rewriting this
+    // connection's key to match a SIBLING's would double that account's share of
+    // the rotation in sse/services/auth.js — exactly what the POST guard prevents.
+    if (typeof apiKey === "string" && apiKey && apiKey !== existing.apiKey) {
+      const siblings = await getProviderConnections({ provider: existing.provider });
+      const clash = siblings.some((c) => c?.id !== id && typeof c?.apiKey === "string" && c.apiKey === apiKey);
+      if (clash) {
+        return NextResponse.json(
+          { error: "Another connection on this node already uses that API key" },
+          { status: 400 }
+        );
+      }
     }
 
     const proxyConfig = normalizeProxyConfig(body);
