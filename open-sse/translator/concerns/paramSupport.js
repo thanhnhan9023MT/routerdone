@@ -65,26 +65,46 @@ const MAX_TOKENS_FLOOR_PROVIDERS = {
   // EuroModels (euromodels.xyz) — reasoning models empty at low max_tokens.
   "openai-compatible-chat-45f27de6-ba0c-4662-b05a-03d0af28255f":
     /glm|kimi|deepseek|minimax|qwen|claude|sonnet|opus|haiku|fable/i,
-  // ohhmyagent.com (anthropic-compatible, one node per API key: ohc, ohc2) —
-  // same failure as EuroModels but on the Anthropic path. Measured 2026-08-17
-  // on claude-opus-5 with max_tokens=24: HTTP 200 carrying only
-  //   content: [{type:"thinking", thinking:"", signature:""}], stop_reason:"max_tokens"
-  // i.e. the whole budget went to hidden thinking, no text at all, 40 output
-  // tokens billed. The handler then (correctly) rejects it as
-  // "Empty upstream response before content" → 502. At max_tokens>=200 the very
-  // same request answers normally, so this is purely a budget floor.
-  "anthropic-compatible-e9f7eea4-83a6-434b-b7a8-b700e63290c5":
-    /claude|sonnet|opus|haiku|fable/i,
-  "anthropic-compatible-e82b7d9e-681e-4bf1-8742-7b691b1d6b41":
-    /claude|sonnet|opus|haiku|fable/i,
   // NOTE: Ollama (format="ollama") is floored in the translator, not here — its
   // openai→ollama translation (max_tokens → options.num_predict) runs before this strip,
   // so raising max_tokens here is a no-op. See translator/request/openai-to-ollama.js.
 };
 
-function raiseMaxTokensFloor(provider, model, body) {
-  const modelRe = MAX_TOKENS_FLOOR_PROVIDERS[provider];
-  if (!modelRe || !modelRe.test(String(model || ""))) return;
+// Same floor, keyed by UPSTREAM HOST instead of node id. A node id is a random UUID
+// minted when the node is created, so a per-id rule dies silently the moment anyone
+// recreates the node or adds a second node for the same upstream — measured
+// 2026-08-17: ohhmyagent.com was floored by id, then a new node for
+// thanhnhan9023.ohhmyagent.com came up with a fresh UUID and got no floor at all,
+// back to 502. Host rules survive both.
+//
+// ohhmyagent (both ohhmyagent.com and the thanhnhan9023.* sub-host) reproduces the
+// EuroModels failure on the Anthropic path: claude-opus-5 at max_tokens=24 returns
+// HTTP 200 carrying only
+//   content: [{type:"thinking", thinking:"", signature:""}], stop_reason:"max_tokens"
+// no text at all, 40 output tokens billed. The handler then (correctly) rejects it as
+// "Empty upstream response before content" → 502. The same request at max_tokens>=2000
+// answers normally, so this is purely a budget floor.
+const MAX_TOKENS_FLOOR_HOSTS = [
+  { host: /(^|\.)ohhmyagent\.com$/i, match: /claude|sonnet|opus|haiku|fable/i },
+];
+
+function hostOf(baseUrl) {
+  if (!baseUrl || typeof baseUrl !== "string") return "";
+  try {
+    return new URL(baseUrl).hostname;
+  } catch {
+    return "";
+  }
+}
+
+function raiseMaxTokensFloor(provider, model, body, baseUrl) {
+  const m = String(model || "");
+  let modelRe = MAX_TOKENS_FLOOR_PROVIDERS[provider];
+  if (!modelRe) {
+    const host = hostOf(baseUrl);
+    modelRe = host ? MAX_TOKENS_FLOOR_HOSTS.find((r) => r.host.test(host))?.match : undefined;
+  }
+  if (!modelRe || !modelRe.test(m)) return;
   for (const key of MAX_OUTPUT_FIELDS) {
     const v = body[key];
     if (typeof v === "number" && Number.isInteger(v) && v > 0 && v < MAX_TOKENS_FLOOR) {
@@ -106,10 +126,10 @@ function clampNumber(body, key, ceiling) {
 }
 
 // Remove unsupported params from body in place; returns body.
-export function stripUnsupportedParams(provider, model, body) {
+export function stripUnsupportedParams(provider, model, body, baseUrl) {
   if (!model || !body || typeof body !== "object") return body;
   stripStrictProviderParams(provider, body);
-  raiseMaxTokensFloor(provider, model, body);
+  raiseMaxTokensFloor(provider, model, body, baseUrl);
   for (const rule of STRIP_RULES) {
     if (rule.provider && rule.provider !== provider) continue;
     if (!matches(rule, model)) continue;

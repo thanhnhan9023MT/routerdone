@@ -82,7 +82,11 @@ export class DefaultExecutor extends BaseExecutor {
     super(provider, PROVIDERS[provider] || PROVIDERS.openai);
   }
 
-  transformRequest(model, body) {
+  // `credentials` is passed by base.js — keep it in the signature: the connection's
+  // baseUrl lives in credentials.providerSpecificData.baseUrl, and param rules that
+  // belong to an UPSTREAM HOST (rather than to one node id) need it. Dropping it here
+  // is why a host rule silently missed a freshly created node.
+  transformRequest(model, body, stream, credentials) {
     const transformed = this.applyJsonSchemaFallback(body);
 
     if (transformed && typeof transformed === "object") {
@@ -90,7 +94,7 @@ export class DefaultExecutor extends BaseExecutor {
       if (this.config.quirks?.dropClientMetadata) {
         delete transformed.client_metadata;
       }
-      stripUnsupportedParams(this.provider, model, transformed);
+      stripUnsupportedParams(this.provider, model, transformed, credentials?.providerSpecificData?.baseUrl);
     }
 
     return injectReasoningContent({ provider: this.provider, model, body: transformed });
