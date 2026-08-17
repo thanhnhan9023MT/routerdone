@@ -1,7 +1,8 @@
 import { getProviderConnections, validateApiKey, updateProviderConnection, getSettings } from "@/lib/localDb";
 import { resolveConnectionProxyConfig } from "@/lib/network/connectionProxy";
 import { formatRetryAfter, checkFallbackError, isClientPayloadError, isModelLockActive, buildModelLockUpdate, getEarliestModelLockUntil, isBusyConcurrencyError, isPreflightTimeoutError, shouldLockConnectionForError, resolveConnectionCooldownMs, buildModelFailureBackoffUpdate, buildClearModelFailureUpdate, isRateLimitError, isProviderSelfHealError, shouldDisableConnectionForError, normalizeStaleConnectionState } from "open-sse/services/accountFallback.js";
-import { MAX_RATE_LIMIT_COOLDOWN_MS } from "open-sse/config/errorConfig.js";
+import { MAX_RATE_LIMIT_COOLDOWN_MS, BUSY_CONNECTION_COOLDOWN_MS } from "open-sse/config/errorConfig.js";
+import { acquire as acquireConnectionSlot, hasCapacity as connectionHasCapacity } from "open-sse/services/connectionConcurrency.js";
 import { resolveProviderId, FREE_PROVIDERS } from "@/shared/constants/providers.js";
 import * as log from "../utils/logger.js";
 
@@ -132,10 +133,44 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
     const providerOverride = (settings.providerStrategies || {})[providerId] || {};
     const strategy = providerOverride.fallbackStrategy || settings.fallbackStrategy || "fill-first";
 
+    // Per-connection in-flight cap. Opt-in via
+    // providerStrategies[<providerId>].maxConcurrentPerConnection; unset/0 keeps this
+    // inert so every other provider selects exactly as before.
+    //
+    // Needed because round-robin alone cannot bound concurrency: it rotates on
+    // `lastUsedAt`, stamped at SELECTION and never cleared, so a credential that is
+    // still streaming becomes least-recently-used again after every other one has had
+    // a turn. Beyond `connections` simultaneous requests the same key carries two
+    // streams and an upstream that permits one answers with a concurrency 429.
+    //
+    // Race-free: the capacity test and the acquire() below run in the same
+    // selectionMutex critical section, so two selections cannot claim one slot.
+    const maxPerConnection = Number(providerOverride.maxConcurrentPerConnection ?? settings.maxConcurrentPerConnection ?? 0);
+    const capped = Number.isFinite(maxPerConnection) && maxPerConnection > 0;
+    let selectable = availableConnections;
+    if (capped) {
+      selectable = availableConnections.filter((c) => connectionHasCapacity(c.id, maxPerConnection));
+      if (selectable.length === 0) {
+        // Genuinely saturated. Report a retryable rate-limit rather than doubling up:
+        // the caller turns allRateLimited into 503 + Retry-After and a combo advances
+        // to its next member.
+        const retryAfter = new Date(Date.now() + BUSY_CONNECTION_COOLDOWN_MS).toISOString();
+        const busyError = `All ${availableConnections.length} ${provider} credentials are at their ${maxPerConnection}-request concurrency cap`;
+        log.warn("AUTH", `${provider} | ${busyError}`);
+        return {
+          allRateLimited: true,
+          retryAfter,
+          retryAfterHuman: formatRetryAfter(retryAfter),
+          lastError: busyError,
+          lastErrorCode: 429,
+        };
+      }
+    }
+
     let connection;
     // Pin to preferred connection if specified and available
     if (preferredConnectionId) {
-      connection = availableConnections.find((c) => c.id === preferredConnectionId);
+      connection = selectable.find((c) => c.id === preferredConnectionId);
       if (connection) {
         log.info("AUTH", `${provider} | pinned to ${connection.id?.slice(0, 8)} (${connection.name || connection.email || "unnamed"})`);
       }
@@ -146,7 +181,7 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
       const stickyLimit = providerOverride.stickyRoundRobinLimit || settings.stickyRoundRobinLimit || 3;
 
       // Sort by lastUsed (most recent first) to find current candidate
-      const byRecency = [...availableConnections].sort((a, b) => {
+      const byRecency = [...selectable].sort((a, b) => {
         if (!a.lastUsedAt && !b.lastUsedAt) return (a.priority || 999) - (b.priority || 999);
         if (!a.lastUsedAt) return 1;
         if (!b.lastUsedAt) return -1;
@@ -166,7 +201,7 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
         });
       } else {
         // Pick the least recently used (excluding current if possible)
-        const sortedByOldest = [...availableConnections].sort((a, b) => {
+        const sortedByOldest = [...selectable].sort((a, b) => {
           if (!a.lastUsedAt && !b.lastUsedAt) return (a.priority || 999) - (b.priority || 999);
           if (!a.lastUsedAt) return -1;
           if (!b.lastUsedAt) return 1;
@@ -183,7 +218,24 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
       }
     } else {
       // Default: fill-first (already sorted by priority in getProviderConnections)
-      connection = availableConnections[0];
+      connection = selectable[0];
+    }
+
+    // Claim the slot before handing the credential out. Unreachable under the mutex
+    // (the capacity filter above already proved there is room) but a null lease must
+    // never be silently ignored, or the cap would only be advisory.
+    const concurrencyLease = acquireConnectionSlot(connection.id, maxPerConnection);
+    if (capped && !concurrencyLease) {
+      const retryAfter = new Date(Date.now() + BUSY_CONNECTION_COOLDOWN_MS).toISOString();
+      const busyError = `${provider} credential ${connection.id?.slice(0, 8)} filled its ${maxPerConnection}-request cap during selection`;
+      log.warn("AUTH", busyError);
+      return {
+        allRateLimited: true,
+        retryAfter,
+        retryAfterHuman: formatRetryAfter(retryAfter),
+        lastError: busyError,
+        lastErrorCode: 429,
+      };
     }
 
     const resolvedProxy = await resolveConnectionProxyConfig(connection.providerSpecificData || {});
@@ -209,6 +261,10 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
         vercelRelayUrl: resolvedProxy.vercelRelayUrl || "",
       },
       connectionId: connection.id,
+      // Slot held on this credential. The caller MUST release it when the request is
+      // finished (handlers/chat.js) — for a stream that means when the body closes,
+      // not when the Response object is returned.
+      concurrencyLease,
       // Include current status for optimization check
       testStatus: connection.testStatus,
       lastError: connection.lastError,

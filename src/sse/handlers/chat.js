@@ -19,6 +19,49 @@ import { handleBypassRequest } from "open-sse/utils/bypassHandler.js";
 import { HTTP_STATUS } from "open-sse/config/runtimeConfig.js";
 import { resolveRoutePolicy } from "open-sse/services/routePolicy.js";
 import { detectContextBackupFormat, isContextBackupEligible, normalizeContextBackupConfig } from "../services/contextSummaryBackup.js";
+import { release as releaseConnectionSlot } from "open-sse/services/connectionConcurrency.js";
+
+// Hand a per-connection concurrency slot back when the response is actually finished.
+//
+// Returning the Response is NOT the end of a streamed request: the body keeps flowing
+// afterwards, so releasing at `return` would free the credential while it is still
+// carrying a stream — exactly the double-booking the cap exists to prevent. So the body
+// is re-wrapped and the slot is released when it closes, errors, or the client cancels.
+//
+// Mirrors the reader-wrapping already used by streamingHandler.replayBufferedBody, and
+// explicitly implements cancel() so a client disconnect frees the slot too.
+function releaseSlotWhenBodyEnds(response, lease) {
+  if (!lease) return response;
+  const body = response?.body;
+  if (!body || typeof body.getReader !== "function") {
+    releaseConnectionSlot(lease);
+    return response;
+  }
+  let released = false;
+  const finish = () => { if (!released) { released = true; releaseConnectionSlot(lease); } };
+  const reader = body.getReader();
+  const wrapped = new ReadableStream({
+    async pull(controller) {
+      try {
+        const { done, value } = await reader.read();
+        if (done) { finish(); controller.close(); return; }
+        controller.enqueue(value);
+      } catch (err) {
+        finish();
+        controller.error(err);
+      }
+    },
+    cancel(reason) {
+      finish();
+      return reader.cancel(reason).catch(() => {});
+    },
+  });
+  return new Response(wrapped, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: response.headers,
+  });
+}
 
 function estimateBackupTokens(body, format) {
   const source = format === "responses" ? body?.input : body?.messages;
@@ -401,102 +444,122 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
     // Log account selection
     log.info("AUTH", `\x1b[32mUsing ${provider} account: ${credentials.connectionName}\x1b[0m`);
 
-    const refreshedCredentials = await checkAndRefreshToken(provider, credentials);
+    // Concurrency slot taken by getProviderCredentials. Ownership is either released
+    // here on every exit path, or transferred to the response body wrapper; the finally
+    // below is the backstop so a throw anywhere in the attempt cannot leak it.
+    let lease = credentials.concurrencyLease || null;
+    const releaseLease = () => { const held = lease; lease = null; releaseConnectionSlot(held); };
+    try {
+      const refreshedCredentials = await checkAndRefreshToken(provider, credentials);
 
-    // Ensure real project ID is available for providers that need it (P0 fix: cold miss)
-    if ((provider === "antigravity" || provider === "gemini-cli") && !refreshedCredentials.projectId) {
-      const pid = await getProjectIdForConnection(credentials.connectionId, refreshedCredentials.accessToken);
-      if (pid) {
-        refreshedCredentials.projectId = pid;
-        // Persist to DB in background so subsequent requests have it immediately
-        updateProviderCredentials(credentials.connectionId, { projectId: pid }).catch(() => { });
+      // Ensure real project ID is available for providers that need it (P0 fix: cold miss)
+      if ((provider === "antigravity" || provider === "gemini-cli") && !refreshedCredentials.projectId) {
+        const pid = await getProjectIdForConnection(credentials.connectionId, refreshedCredentials.accessToken);
+        if (pid) {
+          refreshedCredentials.projectId = pid;
+          // Persist to DB in background so subsequent requests have it immediately
+          updateProviderCredentials(credentials.connectionId, { projectId: pid }).catch(() => { });
+        }
       }
-    }
 
-    // Use shared chatCore
-    const chatSettings = await getSettings();
-    const providerThinking = (chatSettings.providerThinking || {})[provider] || null;
-    const routeInfo = {
-      requestedModel: attemptContext.requestedModel || body.model || modelStr,
-      comboName: attemptContext.comboName || null,
-      comboRunId: attemptContext.comboRunId || null,
-      attemptModel: attemptContext.attemptModel || modelStr,
-      attemptIndex: attemptContext.attemptIndex || 1,
-      attemptTotal: attemptContext.attemptTotal || 1,
-      routeMode,
-      fusionRole: attemptContext.fusionRole || null,
-      actualProvider: provider,
-      actualModel: model,
-    };
-    const result = await handleChatCore({
-      body: { ...body, model: `${provider}/${model}` },
-      modelInfo: { provider, model },
-      credentials: refreshedCredentials,
-      log,
-      clientRawRequest,
-      connectionId: credentials.connectionId,
-      userAgent,
-      apiKey,
-      ccFilterNaming: !!chatSettings.ccFilterNaming,
-      rtkEnabled: !!chatSettings.rtkEnabled,
-      headroomEnabled: !!chatSettings.headroomEnabled,
-      headroomUrl: chatSettings.headroomUrl || DEFAULT_HEADROOM_URL,
-      headroomCompressModel: chatSettings.headroomCompressModel || "",
-      headroomCompressUserMessages: !!chatSettings.headroomCompressUserMessages,
-      headroomAdaptive: chatSettings.headroomAdaptive,
-      cavemanEnabled: !!chatSettings.cavemanEnabled,
-      cavemanLevel: chatSettings.cavemanLevel || "full",
-      ponytailEnabled: !!chatSettings.ponytailEnabled,
-      ponytailLevel: chatSettings.ponytailLevel || "full",
-      contextGuardEnabled: chatSettings.contextGuardEnabled !== false,
-      contextGuardMaxBytes: chatSettings.contextGuardMaxBytes,
-      contextGuardKeepRecent: chatSettings.contextGuardKeepRecent,
-      contextGuardHardCapTokens: chatSettings.contextGuardHardCapTokens,
-      responsesCompactionEnabled: chatSettings.responsesCompactionEnabled === true,
-      responsesCompactionThresholdTokens: chatSettings.responsesCompactionThresholdTokens,
-      providerThinking,
-      routeInfo,
-      streamTimeoutPolicy: resolveRoutePolicy(routeMode, { stream: attemptContext.streamTimeoutPolicy, streamPreflightTimeoutMs: attemptContext.streamPreflightTimeoutMs }).stream,
-      // Detect source format by endpoint + body
-      sourceFormatOverride: request?.url ? detectFormatByEndpoint(new URL(request.url).pathname, body) : null,
-      onCredentialsRefreshed: async (newCreds) => {
-        await updateProviderCredentials(credentials.connectionId, {
-          ...newCreds,
-          existingProviderSpecificData: credentials.providerSpecificData,
-          testStatus: "active"
-        });
-      },
-      onRequestSuccess: async () => {
-        await clearAccountError(credentials.connectionId, credentials, model);
-      }
-    });
-
-    if (result.success) return result.response;
-
-    // Local auto-route failure → one-way strong fallback; never downgrade strong → local.
-    if (route.mode === "local" && route.fallbackModel && isAutoRouteFailure(result.status)) {
-      log.warn("ROUTING", `Local route failed (${result.status}), falling back to ${route.fallbackModel}`);
-      return handleSingleModelChat(
-        { ...body, model: route.fallbackModel },
-        route.fallbackModel,
+      // Use shared chatCore
+      const chatSettings = await getSettings();
+      const providerThinking = (chatSettings.providerThinking || {})[provider] || null;
+      const routeInfo = {
+        requestedModel: attemptContext.requestedModel || body.model || modelStr,
+        comboName: attemptContext.comboName || null,
+        comboRunId: attemptContext.comboRunId || null,
+        attemptModel: attemptContext.attemptModel || modelStr,
+        attemptIndex: attemptContext.attemptIndex || 1,
+        attemptTotal: attemptContext.attemptTotal || 1,
+        routeMode,
+        fusionRole: attemptContext.fusionRole || null,
+        actualProvider: provider,
+        actualModel: model,
+      };
+      const result = await handleChatCore({
+        body: { ...body, model: `${provider}/${model}` },
+        modelInfo: { provider, model },
+        credentials: refreshedCredentials,
+        log,
         clientRawRequest,
-        request,
+        connectionId: credentials.connectionId,
+        userAgent,
         apiKey,
-        { ...attemptContext, autoRoute: false, localModel: null, strongModel: null }
-      );
+        ccFilterNaming: !!chatSettings.ccFilterNaming,
+        rtkEnabled: !!chatSettings.rtkEnabled,
+        headroomEnabled: !!chatSettings.headroomEnabled,
+        headroomUrl: chatSettings.headroomUrl || DEFAULT_HEADROOM_URL,
+        headroomCompressModel: chatSettings.headroomCompressModel || "",
+        headroomCompressUserMessages: !!chatSettings.headroomCompressUserMessages,
+        headroomAdaptive: chatSettings.headroomAdaptive,
+        cavemanEnabled: !!chatSettings.cavemanEnabled,
+        cavemanLevel: chatSettings.cavemanLevel || "full",
+        ponytailEnabled: !!chatSettings.ponytailEnabled,
+        ponytailLevel: chatSettings.ponytailLevel || "full",
+        contextGuardEnabled: chatSettings.contextGuardEnabled !== false,
+        contextGuardMaxBytes: chatSettings.contextGuardMaxBytes,
+        contextGuardKeepRecent: chatSettings.contextGuardKeepRecent,
+        contextGuardHardCapTokens: chatSettings.contextGuardHardCapTokens,
+        responsesCompactionEnabled: chatSettings.responsesCompactionEnabled === true,
+        responsesCompactionThresholdTokens: chatSettings.responsesCompactionThresholdTokens,
+        providerThinking,
+        routeInfo,
+        streamTimeoutPolicy: resolveRoutePolicy(routeMode, { stream: attemptContext.streamTimeoutPolicy, streamPreflightTimeoutMs: attemptContext.streamPreflightTimeoutMs }).stream,
+        // Detect source format by endpoint + body
+        sourceFormatOverride: request?.url ? detectFormatByEndpoint(new URL(request.url).pathname, body) : null,
+        onCredentialsRefreshed: async (newCreds) => {
+          await updateProviderCredentials(credentials.connectionId, {
+            ...newCreds,
+            existingProviderSpecificData: credentials.providerSpecificData,
+            testStatus: "active"
+          });
+        },
+        onRequestSuccess: async () => {
+          await clearAccountError(credentials.connectionId, credentials, model);
+        }
+      });
+
+      if (result.success) {
+        // Transfer slot ownership to the body wrapper: for a stream the credential stays
+        // occupied until the body ends, which is what "one request per key" means.
+        const held = lease;
+        lease = null;
+        return releaseSlotWhenBodyEnds(result.response, held);
+      }
+
+      // Local auto-route failure → one-way strong fallback; never downgrade strong → local.
+      if (route.mode === "local" && route.fallbackModel && isAutoRouteFailure(result.status)) {
+        log.warn("ROUTING", `Local route failed (${result.status}), falling back to ${route.fallbackModel}`);
+        releaseLease();
+        return handleSingleModelChat(
+          { ...body, model: route.fallbackModel },
+          route.fallbackModel,
+          clientRawRequest,
+          request,
+          apiKey,
+          { ...attemptContext, autoRoute: false, localModel: null, strongModel: null }
+        );
+      }
+
+      // Mark account unavailable (auto-calculates cooldown with exponential backoff, or precise resetsAtMs)
+      const { shouldFallback } = await markAccountUnavailable(credentials.connectionId, result.status, result.error, provider, model, result.resetsAtMs);
+
+      if (shouldFallback) {
+        log.warn("AUTH", `Account ${credentials.connectionName} unavailable (${result.status}), trying fallback`);
+        // Free this credential before the next iteration selects one, or a small pool
+        // would exhaust itself against its own cap while retrying.
+        releaseLease();
+        excludeConnectionIds.add(credentials.connectionId);
+        lastError = result.error;
+        lastStatus = result.status;
+        continue;
+      }
+
+      return result.response;
+    } finally {
+      // No-op when already released or transferred to the body wrapper.
+      releaseLease();
     }
-
-    // Mark account unavailable (auto-calculates cooldown with exponential backoff, or precise resetsAtMs)
-    const { shouldFallback } = await markAccountUnavailable(credentials.connectionId, result.status, result.error, provider, model, result.resetsAtMs);
-
-    if (shouldFallback) {
-      log.warn("AUTH", `Account ${credentials.connectionName} unavailable (${result.status}), trying fallback`);
-      excludeConnectionIds.add(credentials.connectionId);
-      lastError = result.error;
-      lastStatus = result.status;
-      continue;
-    }
-
-    return result.response;
   }
 }
