@@ -19,7 +19,7 @@ import { handleBypassRequest } from "open-sse/utils/bypassHandler.js";
 import { HTTP_STATUS } from "open-sse/config/runtimeConfig.js";
 import { resolveRoutePolicy } from "open-sse/services/routePolicy.js";
 import { detectContextBackupFormat, isContextBackupEligible, normalizeContextBackupConfig } from "../services/contextSummaryBackup.js";
-import { release as releaseConnectionSlot } from "open-sse/services/connectionConcurrency.js";
+import { release as releaseConnectionSlot, touch as touchConnectionSlot } from "open-sse/services/connectionConcurrency.js";
 
 // Hand a per-connection concurrency slot back when the response is actually finished.
 //
@@ -34,6 +34,17 @@ function releaseSlotWhenBodyEnds(response, lease) {
   if (!lease) return response;
   const body = response?.body;
   if (!body || typeof body.getReader !== "function") {
+    releaseConnectionSlot(lease);
+    return response;
+  }
+  // Only a STREAM needs to hold the slot past this point. For a non-stream reply the
+  // upstream exchange is already finished when the Response exists (chatCore awaits the
+  // whole upstream body), so the credential is free — and waiting for someone to read
+  // the body would leak the slot whenever nobody does. That is not hypothetical:
+  // services/combo.js handleFusionChat resolves with the first `minPanel` answers and a
+  // straggler's Response is then "kept running but ignored" (withTimeout), never read
+  // and never cancelled, so its slot would sit occupied until the idle sweep.
+  if (!/text\/event-stream/i.test(response.headers?.get?.("content-type") || "")) {
     releaseConnectionSlot(lease);
     return response;
   }
@@ -55,6 +66,11 @@ function releaseSlotWhenBodyEnds(response, lease) {
       try {
         const { done, value } = await reader.read();
         if (done) { finish(); controller.close(); return; }
+        // Keep the lease alive: the sweep in connectionConcurrency is an IDLE timeout,
+        // and a healthy stream has no upper bound on duration. Without this, a stream
+        // still emitting tokens after STALE_LEASE_MS would have its slot reclaimed and
+        // the same credential handed to a second request.
+        touchConnectionSlot(lease);
         controller.enqueue(value);
       } catch (err) {
         finish();
@@ -440,9 +456,15 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
         const errorMsg = lastError || credentials.lastError || "Unavailable";
         const status = lastStatus || Number(credentials.lastErrorCode) || HTTP_STATUS.SERVICE_UNAVAILABLE;
         log.warn("CHAT", `[${provider}/${model}] ${errorMsg} (${credentials.retryAfterHuman})`);
+        // A momentary in-flight-cap hit is NOT "every account is locked out". Both arrive
+        // here as allRateLimited, but combo.js isAuthLockedComboError() turns the
+        // all_accounts_locked label into the FULL model cooldown window, which would
+        // sideline a perfectly healthy primary over ~2s of slot contention. Report the
+        // concurrency case separately so combo treats it as the transient capacity blip
+        // it is (services/combo.js COMBO_TEMP_UNAVAIL_COOLDOWN_MS).
         return unavailableResponse(status, `[${provider}/${model}] ${errorMsg}`, credentials.retryAfter, credentials.retryAfterHuman, {
-          code: "all_accounts_locked",
-          comboCooldownReason: "auth_model_locked",
+          code: credentials.concurrencyBusy ? "connection_concurrency_busy" : "all_accounts_locked",
+          comboCooldownReason: credentials.concurrencyBusy ? "connection_busy" : "auth_model_locked",
         });
       }
       if (excludeConnectionIds.size === 0) {

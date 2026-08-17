@@ -14,14 +14,26 @@
 // maxConcurrentPerConnection. Unset/0 → this module is inert and selection behaves
 // exactly as before, so no other provider changes behaviour.
 //
-// State is per process and deliberately in memory: a lease describes an HTTP request
-// this process is currently serving, so it is worthless to another process and must
-// not outlive a restart.
+// LIMITATION, stated plainly because the cap reads like a hard guarantee and is not one:
+// state is per PROCESS. Blue and green both run at all times (that is what makes a slot
+// switch instant), so right after a switch the old slot can still be streaming on key A
+// while the new slot — with an empty lease map — hands key A to a fresh request, and the
+// upstream sees two streams on one key. Within one process the cap IS hard; across the
+// pair it is not. Closing that would need a shared lease store (SQLite + BEGIN IMMEDIATE)
+// or draining the old slot before the switch; neither is worth a DB write per request on
+// the hot path today, so the honest scope is: hard per process, best-effort across a
+// switch. In memory is still right for what it does describe — a lease names an HTTP
+// request THIS process is serving and must not outlive a restart.
 
-// A lease older than this is treated as leaked and ignored. It MUST stay above the
-// longest possible request: the stream deadline ceiling is 300s
-// (combosRepo.normalizeNodeTimeouts clamps to 300000ms), so 15 minutes leaves a wide
-// margin while still guaranteeing a missed release cannot wedge a credential forever.
+// A lease untouched for this long is treated as leaked and dropped.
+//
+// This is an IDLE timeout, not a total-duration cap, and that distinction is the whole
+// point: there is no ceiling on how long a healthy stream may run (the direct-route
+// budgets are first-byte / first-productive deadlines, not totals), so an absolute TTL
+// would free the slot out from under a stream that is still emitting tokens and hand
+// the same credential to a second request — exactly the double-booking the cap exists
+// to prevent. Callers keep a live lease alive with touch(); only a lease nobody is
+// feeding can expire.
 const STALE_LEASE_MS = 15 * 60 * 1000;
 
 /** @type {Map<string, Map<string, number>>} connectionId → (leaseId → acquiredAtMs) */
@@ -78,6 +90,19 @@ export function acquire(connectionId, limit) {
   if (!bucket) { bucket = new Map(); leases.set(connectionId, bucket); }
   bucket.set(leaseId, now);
   return { connectionId, leaseId };
+}
+
+/**
+ * Mark a lease as still alive, so the idle sweep above does not reclaim it.
+ * Call this while a response body is actually flowing. Returns false if the lease is
+ * already gone (released or swept), which callers may ignore.
+ */
+export function touch(lease) {
+  if (!lease || !lease.connectionId || !lease.leaseId) return false;
+  const bucket = leases.get(lease.connectionId);
+  if (!bucket || !bucket.has(lease.leaseId)) return false;
+  bucket.set(lease.leaseId, Date.now());
+  return true;
 }
 
 /**

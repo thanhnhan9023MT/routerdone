@@ -155,6 +155,13 @@ function isPreflightTimeoutText(errorText) {
 function isAuthLockedComboError(errorBody) {
   return errorBody?.error?.comboCooldownReason === "auth_model_locked" || errorBody?.error?.code === "all_accounts_locked";
 }
+// Every credential of this member is momentarily at its in-flight cap (handlers/chat.js
+// reports this when services/auth.js hits maxConcurrentPerConnection). It clears in
+// ~BUSY_CONNECTION_COOLDOWN_MS, so it must NOT take the auth-lock path: that applies the
+// full failure cooldown and sidelines a healthy primary over seconds of slot contention.
+function isConnectionBusyComboError(errorBody) {
+  return errorBody?.error?.comboCooldownReason === "connection_busy" || errorBody?.error?.code === "connection_concurrency_busy";
+}
 
 // Flatten tool turns into prose so panel models keep the context but can't loop
 // on tools: drop the request's tools, turn tool/function results into assistant
@@ -998,14 +1005,22 @@ export async function handleComboChat({ body, models, comboOutputModel = null, c
         return result;
       }
 
-      const isTempUnavail = typeof errorText === "string" && COMBO_TEMP_UNAVAIL_RE.test(errorText);
-      const cooldownReason = isAuthLockedComboError(errorBody)
-        ? "auth_model_locked"
-        : isPreflightTimeoutText(errorText)
-          ? "preflight_timeout"
-          : isTempUnavail
-            ? "temp_unavailable_short"
-            : "fallback_error";
+      // Treated as a transient blip so it gets COMBO_TEMP_UNAVAIL_COOLDOWN_MS below.
+      const isConnectionBusy = isConnectionBusyComboError(errorBody);
+      const isTempUnavail = isConnectionBusy
+        || (typeof errorText === "string" && COMBO_TEMP_UNAVAIL_RE.test(errorText));
+      // Checked BEFORE the auth-lock branch: the in-flight-cap signal also arrives as
+      // allRateLimited, and letting it fall into auth_model_locked is exactly the "one
+      // 2-second blip sidelines the primary" behaviour the short cooldown exists to avoid.
+      const cooldownReason = isConnectionBusy
+        ? "connection_busy_short"
+        : isAuthLockedComboError(errorBody)
+          ? "auth_model_locked"
+          : isPreflightTimeoutText(errorText)
+            ? "preflight_timeout"
+            : isTempUnavail
+              ? "temp_unavailable_short"
+              : "fallback_error";
       // Transient capacity blip → short fixed cooldown so the primary isn't sidelined
       // for the full 30s window (keeps euro fable as primary; see D-option fix).
       const cooldownUntil = markComboCooldown(modelStr, isTempUnavail ? COMBO_TEMP_UNAVAIL_COOLDOWN_MS : null);

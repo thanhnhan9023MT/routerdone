@@ -7,6 +7,7 @@ import {
   __resetForTests,
   __ageLeaseForTests,
   __STALE_LEASE_MS,
+  touch,
 } from "../../open-sse/services/connectionConcurrency.js";
 
 // Cổng giới hạn số request đồng thời TRÊN MỘT khoá.
@@ -161,5 +162,44 @@ describe("rò lease: hệ quả phải bị chặn có giới hạn", () => {
     const l = acquire("c1", 1);                      // có trần → có lease
     expect(l).toBeTruthy();
     expect(hasCapacity("c1", 0)).toBe(true);         // nhưng caller không trần vẫn qua
+  });
+});
+
+// Codex review 2026-08-17 (High): TTL tuyệt đối sẽ nhả slot của một stream CÒN ĐANG CHẢY.
+// Kịch bản nó nêu: trần 1 luồng/khoá, stream phát token đều trong 20 phút; tới phút 16 một
+// request khác gọi hasCapacity() → purge() xoá lease cũ → cấp lại CÙNG khoá → upstream
+// 1-stream/khoá trả 429 / dùng đôi. Lập luận cũ của em ("trần stream 300s") SAI: các mốc
+// direct-route là first-byte / first-productive, không phải tổng thời lượng.
+// → mốc quá hạn phải là IDLE, và bộ bọc thân response gọi touch() theo từng chunk.
+describe("touch: mốc quá hạn là IDLE, không phải tổng thời lượng", () => {
+  beforeEach(() => __resetForTests());
+
+  it("stream dài hơn mốc quá hạn vẫn GIỮ được slot nếu còn chảy", () => {
+    const lease = acquire("c1", 1);
+    // giả lập đã chảy được rất lâu
+    __ageLeaseForTests(lease, __STALE_LEASE_MS - 1000);
+    expect(touch(lease)).toBe(true);                 // có chunk mới → làm mới
+    __ageLeaseForTests(lease, __STALE_LEASE_MS - 1000);
+    expect(touch(lease)).toBe(true);                 // tổng đã vượt xa mốc mà vẫn sống
+    expect(inFlight("c1")).toBe(1);
+    expect(acquire("c1", 1)).toBeNull();             // KHÔNG ai được cấp cùng khoá
+  });
+
+  it("không còn chảy thì vẫn bị thu hồi (chống rò thật)", () => {
+    const lease = acquire("c1", 1);
+    __ageLeaseForTests(lease, __STALE_LEASE_MS + 1);  // im lặng quá mốc
+    expect(inFlight("c1")).toBe(0);
+    expect(acquire("c1", 1)).toBeTruthy();
+  });
+
+  it("touch trên lease đã nhả/đã thu trả false, không hồi sinh slot", () => {
+    const lease = acquire("c1", 1);
+    expect(release(lease)).toBe(true);
+    expect(touch(lease)).toBe(false);
+    expect(inFlight("c1")).toBe(0);
+    const other = acquire("c1", 1);                   // request khác chiếm slot
+    expect(touch(lease)).toBe(false);                 // lease cũ không chạm được vào nó
+    expect(inFlight("c1")).toBe(1);
+    release(other);
   });
 });

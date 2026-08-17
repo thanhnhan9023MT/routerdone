@@ -161,9 +161,11 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
     if (capped) {
       selectable = availableConnections.filter((c) => connectionHasCapacity(c.id, maxPerConnection));
       if (selectable.length === 0) {
-        // Genuinely saturated. Report a retryable rate-limit rather than doubling up:
-        // the caller turns allRateLimited into 503 + Retry-After and a combo advances
-        // to its next member.
+        // Genuinely saturated. Report a retryable rate-limit rather than doubling up.
+        // The caller surfaces this with Retry-After; the status it picks is
+        // `lastStatus || lastErrorCode || 503`, so on the first attempt the client sees
+        // the 429 below, and after a failed fallback it inherits that upstream's status —
+        // not necessarily 503.
         const retryAfter = new Date(Date.now() + BUSY_CONNECTION_COOLDOWN_MS).toISOString();
         const busyError = `All ${availableConnections.length} ${provider} credentials are at their ${maxPerConnection}-request concurrency cap`;
         log.warn("AUTH", `${provider} | ${busyError}`);
@@ -173,6 +175,11 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
           retryAfterHuman: formatRetryAfter(retryAfter),
           lastError: busyError,
           lastErrorCode: 429,
+          // Distinguishes "the credential is busy for ~2s" from "every account is locked
+          // out". Without it chat.js labels both `all_accounts_locked`, which
+          // combo.js isAuthLockedComboError() turns into the FULL 30s model cooldown —
+          // sidelining a perfectly healthy primary over a momentary slot contention.
+          concurrencyBusy: true,
         };
       }
     }
@@ -249,6 +256,7 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
         retryAfterHuman: formatRetryAfter(retryAfter),
         lastError: busyError,
         lastErrorCode: 429,
+        concurrencyBusy: true,
       };
     }
 
