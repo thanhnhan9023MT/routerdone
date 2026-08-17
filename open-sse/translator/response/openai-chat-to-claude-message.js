@@ -1,5 +1,18 @@
 import { fromOpenAIFinish } from "../concerns/finishReason.js";
 
+// Content-block types that only ever appear in a Claude Messages body. Used to
+// tell a real Messages response from an OpenAI Responses message item, which
+// shares `type: "message"` + `content[]` but uses output_text / refusal blocks.
+const CLAUDE_BLOCK_TYPES = new Set([
+  "text",
+  "thinking",
+  "redacted_thinking",
+  "tool_use",
+  "server_tool_use",
+  "tool_result",
+  "web_search_tool_result",
+]);
+
 /**
  * Convert a complete OpenAI `chat.completion` object into a Claude Messages API
  * response object.
@@ -14,6 +27,26 @@ import { fromOpenAIFinish } from "../concerns/finishReason.js";
  * chat pipeline actually emits.
  */
 export function openaiChatToClaudeMessage(resp, fallbackModel) {
+  // Already a Claude Messages body (Claude-native provider needed no
+  // translation) — converting it would find no `.choices` and silently return
+  // an empty message with usage 0. Pass it straight through instead.
+  //
+  // The test is deliberately narrow. An OpenAI Responses *message item* also
+  // carries `type: "message"` with a `content` array and no `choices`, so those
+  // fields alone cannot tell the shapes apart — but the BLOCK types can: Claude
+  // emits text/thinking/tool_use, Responses emits output_text/refusal. Checking
+  // the blocks keeps a Responses item on the conversion path where it belongs,
+  // without depending on optional top-level fields like `stop_reason`.
+  if (
+    resp &&
+    resp.type === "message" &&
+    Array.isArray(resp.content) &&
+    !resp.choices &&
+    resp.content.every((b) => CLAUDE_BLOCK_TYPES.has(b?.type))
+  ) {
+    return resp;
+  }
+
   const choice = resp?.choices?.[0] || {};
   const msg = choice.message || {};
   const content = [];

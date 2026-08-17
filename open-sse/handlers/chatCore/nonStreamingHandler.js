@@ -147,7 +147,9 @@ export function translateNonStreamingResponse(responseBody, targetFormat, source
 }
 
 
-function hasProductiveResponse(body) {
+// Exported for tests — this predicate decides between "serve the answer" and
+// "502 Empty upstream response", so its shape coverage needs locking down.
+export function hasProductiveResponse(body) {
   if (!body || typeof body !== "object") return false;
   const choice = body.choices?.[0];
   const msg = choice?.message || choice?.delta || {};
@@ -156,7 +158,26 @@ function hasProductiveResponse(body) {
   if (typeof msg.refusal === "string" && msg.refusal.length > 0) return true;
   if (Array.isArray(msg.tool_calls) && msg.tool_calls.length > 0) return true;
   if (typeof choice?.text === "string" && choice.text.length > 0) return true;
-  if (Array.isArray(body.content) && body.content.some((b) => typeof b?.text === "string" && b.text.length > 0)) return true;
+  // Claude Messages body. A tool-only answer (content is just `tool_use`) and a
+  // thinking-only answer carry no `.text` at all, but are perfectly productive —
+  // counting them as empty 502s every agent/tool-calling request to a
+  // Claude-native provider. `redacted_thinking` carries its payload in `.data`,
+  // not `.thinking`, and must count too — the pass-through guard in
+  // openai-chat-to-claude-message.js treats it as a valid Claude block, so this
+  // predicate has to agree or the body 502s before ever reaching it.
+  if (
+    Array.isArray(body.content) &&
+    body.content.some(
+      (b) =>
+        (typeof b?.text === "string" && b.text.length > 0) ||
+        b?.type === "tool_use" ||
+        b?.type === "server_tool_use" ||
+        b?.type === "redacted_thinking" ||
+        (typeof b?.thinking === "string" && b.thinking.length > 0)
+    )
+  ) {
+    return true;
+  }
   if (Array.isArray(body.output)) {
     return body.output.some((o) => o?.type === "function_call" || (Array.isArray(o.content) && o.content.some((c) => typeof c?.text === "string" && c.text.length > 0)));
   }
@@ -223,9 +244,14 @@ export async function handleNonStreamingResponse({ providerResponse, provider, m
     }
   }
 
-  // Ensure OpenAI-required fields
-  if (!translatedResponse.object) translatedResponse.object = "chat.completion";
-  if (!translatedResponse.created) translatedResponse.created = Math.floor(Date.now() / 1000);
+  // Ensure OpenAI-required fields — only on an OpenAI-shaped body. A raw Claude
+  // Messages body (Claude-native provider, no translation) now reaches the
+  // client untouched, so stamping `object:"chat.completion"` and `created` on it
+  // would ship OpenAI fields inside an Anthropic response.
+  if (translatedResponse?.choices) {
+    if (!translatedResponse.object) translatedResponse.object = "chat.completion";
+    if (!translatedResponse.created) translatedResponse.created = Math.floor(Date.now() / 1000);
+  }
 
   // Strip Azure-specific fields
   delete translatedResponse.prompt_filter_results;
@@ -279,6 +305,14 @@ export async function handleNonStreamingResponse({ providerResponse, provider, m
   // OpenAI. Convert so Anthropic clients get a real Messages response. Only for
   // direct (non-combo) requests — combo/fusion consume OpenAI `choices`
   // internally and convert their own final result at that layer.
+  //
+  // The converter itself decides whether there is anything to convert, by
+  // SHAPE. Do not gate this on `targetFormat`: that is transport config, not
+  // proof of body shape — a Claude-transport upstream can still answer in
+  // OpenAI form (see the xiaomi-tokenplan note near the top of this file), and
+  // a Claude-native one needs no translation at all so `translatedResponse` is
+  // still a raw Messages body. Gating on config would mangle the first case or
+  // pass the second through raw; only the shape check gets both right.
   let clientBody = translatedResponse;
   if (sourceFormat === FORMATS.CLAUDE && !routeInfo?.comboName) {
     clientBody = openaiChatToClaudeMessage(translatedResponse, model);
