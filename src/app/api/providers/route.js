@@ -156,12 +156,30 @@ export async function POST(request) {
         const k = c?.apiKey ?? c?.data?.apiKey ?? c?.providerSpecificData?.apiKey;
         return typeof k === "string" && k === apiKey;
       });
-      return clash
-        ? NextResponse.json(
-            { error: `This API key is already connected to the ${label} node — add a different key to spread load` },
-            { status: 400 }
-          )
-        : null;
+      if (clash) {
+        return NextResponse.json(
+          { error: `This API key is already connected to the ${label} node — add a different key to spread load` },
+          { status: 400 }
+        );
+      }
+      // A same-NAME connection must be refused explicitly, because
+      // connectionsRepo.upsertProviderConnection dedups apikey connections by
+      // (provider, name) and MERGES — a second key posted under an existing name
+      // would overwrite the first key, return 201, and leave one row. The caller
+      // would believe it has two accounts while one credential was destroyed.
+      // Rotating a key on purpose is PUT /api/providers/<id>, not a re-POST.
+      if (connectionName && existing.some((c) => c?.authType === "apikey" && c?.name === connectionName)) {
+        return NextResponse.json(
+          {
+            error:
+              `The ${label} node already has a connection named "${connectionName}" — ` +
+              `give the new key a different name (e.g. "${connectionName} #2"), ` +
+              `or use PUT /api/providers/<id> to rotate the existing key`,
+          },
+          { status: 400 }
+        );
+      }
+      return null;
     };
 
     if (isOpenAICompatibleProvider(provider)) {

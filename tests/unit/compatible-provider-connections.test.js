@@ -201,6 +201,34 @@ describe("compatible provider connections API", () => {
     expect(new Set(stored.map((c) => c.apiKey))).toEqual(new Set(["test-key", "test-key-2"]));
   });
 
+  // connectionsRepo.upsertProviderConnection dedups apikey rows by (provider, name)
+  // and MERGES, so a second key posted under an existing name silently overwrote the
+  // first key and still returned 201 — one row, one credential destroyed. Refuse it.
+  it("returns 400 for a second key posted under an EXISTING name (would overwrite)", async () => {
+    const ctx = await setupTestContext({
+      id: "openai-compatible-samename-test",
+      type: "openai-compatible",
+      name: "Same Name Node",
+      prefix: "sn",
+      apiType: "chat",
+      baseUrl: "https://same-name.test/v1",
+    });
+    cleanup = ctx.cleanup;
+
+    const first = await ctx.POST(makeRequest(ctx.node.id));
+    // different key, SAME name ("Test Connection")
+    const second = await ctx.POST(makeRequest(ctx.node.id, { apiKey: "test-key-2" }));
+    const body = await second.json();
+    const stored = await ctx.getProviderConnections({ provider: ctx.node.id });
+
+    expect(first.status).toBe(201);
+    expect(second.status).toBe(400);
+    expect(body.error).toContain("different name");
+    // the first credential must survive untouched
+    expect(stored).toHaveLength(1);
+    expect(stored[0].apiKey).toBe("test-key");
+  });
+
   it("accepts a second key on an ANTHROPIC-compatible node too", async () => {
     const ctx = await setupTestContext({
       id: "anthropic-compatible-multikey-test",
