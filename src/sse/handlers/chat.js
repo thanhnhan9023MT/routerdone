@@ -462,9 +462,16 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
         // sideline a perfectly healthy primary over ~2s of slot contention. Report the
         // concurrency case separately so combo treats it as the transient capacity blip
         // it is (services/combo.js COMBO_TEMP_UNAVAIL_COOLDOWN_MS).
+        // `!lastStatus` matters: if an earlier attempt in this chain already failed
+        // upstream, THAT is what the client is being told about (errorMsg above is
+        // `lastError`), and it must keep its own handling. Measured 2026-08-17: a real
+        // NVIDIA 429 on attempt 1 followed by "all remaining credentials capped" on
+        // attempt 2 was reported as connection_busy, which would hand a genuinely
+        // rate-limited member the 5s retry meant for local slot contention.
+        const concurrencyBlocked = credentials.concurrencyBusy === true && !lastStatus;
         return unavailableResponse(status, `[${provider}/${model}] ${errorMsg}`, credentials.retryAfter, credentials.retryAfterHuman, {
-          code: credentials.concurrencyBusy ? "connection_concurrency_busy" : "all_accounts_locked",
-          comboCooldownReason: credentials.concurrencyBusy ? "connection_busy" : "auth_model_locked",
+          code: concurrencyBlocked ? "connection_concurrency_busy" : "all_accounts_locked",
+          comboCooldownReason: concurrencyBlocked ? "connection_busy" : "auth_model_locked",
         });
       }
       if (excludeConnectionIds.size === 0) {
