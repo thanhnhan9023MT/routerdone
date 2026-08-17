@@ -122,3 +122,44 @@ describe("connectionConcurrency", () => {
     });
   });
 });
+
+// Quy tắc "chỉ cấp slot ở nơi CÓ đường nhả" (rà lại 2026-08-17).
+//
+// `getProviderCredentials` có 7 nơi gọi nhưng CHỈ `handlers/chat.js` nhả lease
+// (releaseLease + releaseSlotWhenBodyEnds). Sáu đường còn lại — image/fetch/stt/tts/
+// embeddings/search — chỉ dùng credential rồi trả về. Nếu auth.js cấp lease cho chúng
+// thì mỗi request rò một slot, và ngay khi ai đó khai maxConcurrentPerConnection cho
+// node mà mấy đường đó dùng, credential sẽ KẸT cho tới lần quét rò 15 phút — sự cố
+// khách thấy được, sinh ra bởi một thay đổi cấu hình, và gần như không thể suy ra.
+//
+// Nên auth.js chỉ bật cổng khi caller opt-in (`acquireConcurrencySlot: true`). Test dưới
+// đây neo lại hệ quả của thiết kế đó ở tầng sổ lease: lease bị rò KHÔNG được giữ slot
+// mãi mãi, và không cấp lease thì không có gì phải nhả.
+describe("rò lease: hệ quả phải bị chặn có giới hạn", () => {
+  beforeEach(() => __resetForTests());
+
+  it("N lease bị rò trên CÙNG khoá đều được giải phóng khi quá hạn", () => {
+    const leases = [acquire("c1", 3), acquire("c1", 3), acquire("c1", 3)];
+    expect(acquire("c1", 3)).toBeNull();            // đầy
+    leases.forEach((l) => __ageLeaseForTests(l, __STALE_LEASE_MS + 1));
+    expect(inFlight("c1")).toBe(0);
+    expect(acquire("c1", 3)).toBeTruthy();
+  });
+
+  it("lease rò của khoá A không chặn khoá B", () => {
+    const a = acquire("cA", 1);
+    expect(a).toBeTruthy();
+    expect(acquire("cB", 1)).toBeTruthy();          // khoá khác vẫn mượn được
+    expect(acquire("cA", 1)).toBeNull();            // A vẫn bị giữ, đúng
+  });
+
+  it("không có trần thì KHÔNG phát lease → không có gì để rò", () => {
+    // auth.js gọi acquire() chỉ khi capped; đây là hợp đồng phía dưới: hasCapacity luôn
+    // đúng khi không trần, nên caller không-opt-in không bao giờ bị cổng chặn.
+    expect(hasCapacity("c1", 0)).toBe(true);
+    expect(hasCapacity("c1", undefined)).toBe(true);
+    const l = acquire("c1", 1);                      // có trần → có lease
+    expect(l).toBeTruthy();
+    expect(hasCapacity("c1", 0)).toBe(true);         // nhưng caller không trần vẫn qua
+  });
+});

@@ -145,8 +145,18 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
     //
     // Race-free: the capacity test and the acquire() below run in the same
     // selectionMutex critical section, so two selections cannot claim one slot.
+    //
+    // Gated on the CALLER opting in, because a slot that is taken and never given back
+    // is worse than no cap at all. Of the seven callers of this function only
+    // handlers/chat.js implements the release side; image/fetch/stt/tts/embeddings/search
+    // just use the credential and return. Acquiring for them would leak a slot per
+    // request, and the moment someone set maxConcurrentPerConnection on a node those
+    // paths use, that credential would wedge until the 15-minute stale sweep — an
+    // inexplicable outage triggered by a config change. So without opt-in the whole
+    // mechanism (filter AND acquire) stays off: not enforced beats half-enforced.
+    const wantsConcurrencySlot = options?.acquireConcurrencySlot === true;
     const maxPerConnection = Number(providerOverride.maxConcurrentPerConnection ?? settings.maxConcurrentPerConnection ?? 0);
-    const capped = Number.isFinite(maxPerConnection) && maxPerConnection > 0;
+    const capped = wantsConcurrencySlot && Number.isFinite(maxPerConnection) && maxPerConnection > 0;
     let selectable = availableConnections;
     if (capped) {
       selectable = availableConnections.filter((c) => connectionHasCapacity(c.id, maxPerConnection));
@@ -224,7 +234,11 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
     // Claim the slot before handing the credential out. Unreachable under the mutex
     // (the capacity filter above already proved there is room) but a null lease must
     // never be silently ignored, or the cap would only be advisory.
-    const concurrencyLease = acquireConnectionSlot(connection.id, maxPerConnection);
+    //
+    // No lease at all when uncapped: an uncapped lease would still have to be released,
+    // which puts the response-body wrapper in handlers/chat.js on the hot path of every
+    // provider for no benefit, and turns every non-releasing caller into a slow leak.
+    const concurrencyLease = capped ? acquireConnectionSlot(connection.id, maxPerConnection) : null;
     if (capped && !concurrencyLease) {
       const retryAfter = new Date(Date.now() + BUSY_CONNECTION_COOLDOWN_MS).toISOString();
       const busyError = `${provider} credential ${connection.id?.slice(0, 8)} filled its ${maxPerConnection}-request cap during selection`;

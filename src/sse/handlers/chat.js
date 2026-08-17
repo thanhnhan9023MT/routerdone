@@ -39,7 +39,17 @@ function releaseSlotWhenBodyEnds(response, lease) {
   }
   let released = false;
   const finish = () => { if (!released) { released = true; releaseConnectionSlot(lease); } };
-  const reader = body.getReader();
+  // getReader() throws if the body is already locked/disturbed. That should not happen
+  // (these responses are freshly built) but the fallback must be "hand back the response
+  // we already have", not a 500: this wrapper exists for bookkeeping, and bookkeeping
+  // must never be able to fail a request that succeeded upstream.
+  let reader;
+  try {
+    reader = body.getReader();
+  } catch {
+    releaseConnectionSlot(lease);
+    return response;
+  }
   const wrapped = new ReadableStream({
     async pull(controller) {
       try {
@@ -420,7 +430,9 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
   const ignoreModelLocks = routeMode === "combo" || routeMode === "fusion";
 
   while (true) {
-    const credentials = await getProviderCredentials(provider, excludeConnectionIds, model, { ignoreModelLocks });
+    // acquireConcurrencySlot: this handler implements the release side (releaseLease +
+    // releaseSlotWhenBodyEnds), so it is the only caller allowed to take a slot.
+    const credentials = await getProviderCredentials(provider, excludeConnectionIds, model, { ignoreModelLocks, acquireConcurrencySlot: true });
 
     // All accounts unavailable
     if (!credentials || credentials.allRateLimited) {
