@@ -49,9 +49,13 @@ export async function createBunSqliteAdapter(filePath) {
     },
     exec(sql) { return db.exec(sql); },
     transaction(fn) {
-      // bun:sqlite has db.transaction() API (similar to better-sqlite3)
+      // bun:sqlite has db.transaction() API (similar to better-sqlite3), including the
+      // .immediate variant. IMMEDIATE for the same reason as betterSqliteAdapter: every
+      // caller is read-modify-write, and a deferred BEGIN fails its write upgrade with
+      // SQLITE_BUSY_SNAPSHOT instantly, bypassing busy_timeout, whenever another
+      // connection (the other blue/green slot) committed since the read.
       const tx = db.transaction(fn);
-      return tx();
+      return typeof tx.immediate === "function" ? tx.immediate() : tx();
     },
     checkpoint() { try { db.exec("PRAGMA wal_checkpoint(TRUNCATE)"); } catch {} },
     close() {

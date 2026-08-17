@@ -23,6 +23,9 @@ export async function createNodeSqliteAdapter(filePath) {
   db.exec(PRAGMA_SQL);
 
   const stmtCache = new Map();
+
+  // Nesting depth for transaction(): only the outermost level owns BEGIN/COMMIT.
+  let txDepth = 0;
   function prepare(sql) {
     let stmt = stmtCache.get(sql);
     if (!stmt) {
@@ -62,16 +65,43 @@ export async function createNodeSqliteAdapter(filePath) {
     },
     exec(sql) { return db.exec(sql); },
     transaction(fn) {
-      // node:sqlite has no transaction wrapper. Use SAVEPOINT for nested support.
-      const sp = `sp_${Math.random().toString(36).slice(2)}`;
-      db.exec(`SAVEPOINT ${sp}`);
+      // node:sqlite has no transaction wrapper.
+      //
+      // The outermost level MUST open with BEGIN IMMEDIATE, not a bare SAVEPOINT: a
+      // SAVEPOINT outside any transaction starts an implicit DEFERRED one, so the
+      // read-modify-write shape of every repo caller takes a read snapshot first and
+      // then fails its write upgrade with SQLITE_BUSY_SNAPSHOT the moment another
+      // connection (the other blue/green slot) has committed — instantly, without
+      // consulting busy_timeout. See betterSqliteAdapter for the measurement.
+      //
+      // SAVEPOINT is still what nesting uses, so a transaction() inside a transaction()
+      // keeps working and only the outer one owns BEGIN/COMMIT.
+      if (txDepth > 0) {
+        const sp = `sp_${Math.random().toString(36).slice(2)}`;
+        db.exec(`SAVEPOINT ${sp}`);
+        txDepth++;
+        try {
+          const r = fn();
+          db.exec(`RELEASE ${sp}`);
+          return r;
+        } catch (e) {
+          try { db.exec(`ROLLBACK TO ${sp}`); db.exec(`RELEASE ${sp}`); } catch {}
+          throw e;
+        } finally {
+          txDepth--;
+        }
+      }
+      db.exec("BEGIN IMMEDIATE");
+      txDepth++;
       try {
         const r = fn();
-        db.exec(`RELEASE ${sp}`);
+        db.exec("COMMIT");
         return r;
       } catch (e) {
-        try { db.exec(`ROLLBACK TO ${sp}`); db.exec(`RELEASE ${sp}`); } catch {}
+        try { db.exec("ROLLBACK"); } catch {}
         throw e;
+      } finally {
+        txDepth--;
       }
     },
     checkpoint() { try { db.exec("PRAGMA wal_checkpoint(TRUNCATE)"); } catch {} },

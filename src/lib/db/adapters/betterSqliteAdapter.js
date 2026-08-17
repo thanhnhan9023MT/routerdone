@@ -44,7 +44,28 @@ export function createBetterSqliteAdapter(filePath) {
     get(sql, params = []) { return prepare(sql).get(params); },
     all(sql, params = []) { return prepare(sql).all(params); },
     exec(sql) { return db.exec(sql); },
-    transaction(fn) { return db.transaction(fn)(); },
+    // BEGIN IMMEDIATE, not better-sqlite3's default plain `BEGIN` (deferred).
+    //
+    // Every caller of transaction() in src/lib/db/repos/* is read-modify-write: it
+    // SELECTs a row, merges, then UPDATEs. Under `BEGIN` that takes a read snapshot
+    // first and only later asks for the write lock — and in WAL mode, if another
+    // CONNECTION committed in between, SQLite fails that upgrade with
+    // SQLITE_BUSY_SNAPSHOT **immediately, without invoking the busy handler**, so
+    // `PRAGMA busy_timeout` (5000ms, schema.js) buys nothing at all.
+    //
+    // That is not theoretical here: blue and green slots both hold this same file
+    // open (both must stay live for an instant switch), so there are always two
+    // writers. Measured 2026-08-17 with two connections on one WAL file:
+    //   BEGIN           → SQLITE_BUSY_SNAPSHOT after 0ms   (busy_timeout ignored)
+    //   BEGIN IMMEDIATE → busy handler runs, waits the full timeout
+    // Production symptom was `SqliteError: database is locked` (SQLITE_BUSY) thrown
+    // out of updateProviderConnection/clearAccountError on the request path once
+    // round-robin started writing lastUsedAt on every single request.
+    //
+    // IMMEDIATE takes the write lock at BEGIN, before the read, which both makes
+    // busy_timeout effective and makes read-modify-write actually atomic across
+    // processes instead of two slots merging from the same stale row.
+    transaction(fn) { return db.transaction(fn).immediate(); },
     checkpoint() { try { db.pragma("wal_checkpoint(TRUNCATE)"); } catch {} },
     close() {
       clearInterval(checkpointTimer);
