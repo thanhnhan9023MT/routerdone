@@ -65,6 +65,18 @@ const MAX_TOKENS_FLOOR_PROVIDERS = {
   // EuroModels (euromodels.xyz) — reasoning models empty at low max_tokens.
   "openai-compatible-chat-45f27de6-ba0c-4662-b05a-03d0af28255f":
     /glm|kimi|deepseek|minimax|qwen|claude|sonnet|opus|haiku|fable/i,
+  // ohhmyagent.com (anthropic-compatible, one node per API key: ohc, ohc2) —
+  // same failure as EuroModels but on the Anthropic path. Measured 2026-08-17
+  // on claude-opus-5 with max_tokens=24: HTTP 200 carrying only
+  //   content: [{type:"thinking", thinking:"", signature:""}], stop_reason:"max_tokens"
+  // i.e. the whole budget went to hidden thinking, no text at all, 40 output
+  // tokens billed. The handler then (correctly) rejects it as
+  // "Empty upstream response before content" → 502. At max_tokens>=200 the very
+  // same request answers normally, so this is purely a budget floor.
+  "anthropic-compatible-e9f7eea4-83a6-434b-b7a8-b700e63290c5":
+    /claude|sonnet|opus|haiku|fable/i,
+  "anthropic-compatible-e82b7d9e-681e-4bf1-8742-7b691b1d6b41":
+    /claude|sonnet|opus|haiku|fable/i,
   // NOTE: Ollama (format="ollama") is floored in the translator, not here — its
   // openai→ollama translation (max_tokens → options.num_predict) runs before this strip,
   // so raising max_tokens here is a no-op. See translator/request/openai-to-ollama.js.
