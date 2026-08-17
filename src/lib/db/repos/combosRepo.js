@@ -86,12 +86,20 @@ export async function createCombo(data) {
     visionModel: normalizeVisionModel(data.visionModel),
     pdfModel: normalizeVisionModel(data.pdfModel),
     nodeTimeouts: normalizeNodeTimeouts(data.nodeTimeouts, data.models || []),
+    // outputModel / stripReasoning: columns that exist and are READ by rowToCombo,
+    // but were missing from both write statements — so a caller could set them, get
+    // them echoed back in the API response (updateCombo merges in memory), and find
+    // them still NULL in the table. outputModel is the name a combo reports to the
+    // client, i.e. the whole point of serving one model under another's name; losing
+    // it silently leaked the upstream's own id (e.g. "ohh/opus-5").
+    outputModel: data.outputModel ?? null,
+    stripReasoning: data.stripReasoning ? 1 : 0,
     createdAt: now,
     updatedAt: now,
   };
   db.run(
-    `INSERT INTO combos(id, name, kind, models, reasoningTimeoutMs, visionModel, pdfModel, nodeTimeouts, createdAt, updatedAt) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [combo.id, combo.name, combo.kind, stringifyJson(combo.models), combo.reasoningTimeoutMs, combo.visionModel, combo.pdfModel, combo.nodeTimeouts ? stringifyJson(combo.nodeTimeouts) : null, combo.createdAt, combo.updatedAt]
+    `INSERT INTO combos(id, name, kind, models, reasoningTimeoutMs, visionModel, pdfModel, nodeTimeouts, outputModel, stripReasoning, createdAt, updatedAt) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [combo.id, combo.name, combo.kind, stringifyJson(combo.models), combo.reasoningTimeoutMs, combo.visionModel, combo.pdfModel, combo.nodeTimeouts ? stringifyJson(combo.nodeTimeouts) : null, combo.outputModel, combo.stripReasoning, combo.createdAt, combo.updatedAt]
   );
   return combo;
 }
@@ -117,14 +125,24 @@ export async function updateCombo(id, data) {
     const ntm = ("nodeTimeouts" in data)
       ? normalizeNodeTimeouts(data.nodeTimeouts, merged.models || [])
       : (current.nodeTimeouts ?? null);
+    // Same "sent-or-preserve" rule as the fields above, so a PUT that omits them
+    // does not wipe them.
+    const om = ("outputModel" in data)
+      ? (data.outputModel || null)
+      : (current.outputModel ?? null);
+    const sr = ("stripReasoning" in data)
+      ? (data.stripReasoning ? 1 : 0)
+      : (current.stripReasoning ? 1 : 0);
     db.run(
-      `UPDATE combos SET name = ?, kind = ?, models = ?, reasoningTimeoutMs = ?, visionModel = ?, pdfModel = ?, nodeTimeouts = ?, updatedAt = ? WHERE id = ?`,
-      [merged.name, merged.kind, stringifyJson(merged.models || []), rtm, vm, pm, ntm ? stringifyJson(ntm) : null, merged.updatedAt, id]
+      `UPDATE combos SET name = ?, kind = ?, models = ?, reasoningTimeoutMs = ?, visionModel = ?, pdfModel = ?, nodeTimeouts = ?, outputModel = ?, stripReasoning = ?, updatedAt = ? WHERE id = ?`,
+      [merged.name, merged.kind, stringifyJson(merged.models || []), rtm, vm, pm, ntm ? stringifyJson(ntm) : null, om, sr, merged.updatedAt, id]
     );
     merged.reasoningTimeoutMs = rtm;
     merged.nodeTimeouts = ntm;
     merged.visionModel = vm;
     merged.pdfModel = pm;
+    merged.outputModel = om;
+    merged.stripReasoning = !!sr;
     result = merged;
   });
   return result;
