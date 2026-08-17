@@ -42,7 +42,7 @@ async function setupTestContext(nodeData) {
   };
 }
 
-function makeRequest(provider) {
+function makeRequest(provider, overrides = {}) {
   return new Request("https://routerdone.local/api/providers", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -51,6 +51,7 @@ function makeRequest(provider) {
       apiKey: "test-key",
       name: "Test Connection",
       defaultModel: "test-model",
+      ...overrides,
     }),
   });
 }
@@ -149,7 +150,10 @@ describe("compatible provider connections API", () => {
     });
   });
 
-  it("returns 400 for a duplicate connection on the same compatible node", async () => {
+  // Same key twice on one node is still rejected: it would silently double that
+  // account's share of the rotation in sse/services/auth.js and pretend a quota
+  // the account does not have.
+  it("returns 400 for a duplicate API KEY on the same compatible node", async () => {
     const ctx = await setupTestContext({
       id: "openai-compatible-duplicate-test",
       type: "openai-compatible",
@@ -161,14 +165,58 @@ describe("compatible provider connections API", () => {
     cleanup = ctx.cleanup;
 
     const firstResponse = await ctx.POST(makeRequest(ctx.node.id));
-    const secondResponse = await ctx.POST(makeRequest(ctx.node.id));
+    const secondResponse = await ctx.POST(makeRequest(ctx.node.id)); // same "test-key"
     const secondBody = await secondResponse.json();
     const storedConnections = await ctx.getProviderConnections({ provider: ctx.node.id });
 
     expect(firstResponse.status).toBe(201);
     expect(secondResponse.status).toBe(400);
-    expect(secondBody.error).toContain("Only one connection is allowed");
+    expect(secondBody.error).toContain("already connected");
     expect(storedConnections).toHaveLength(1);
     expectCompatibleConnection(storedConnections[0], ctx.node, { apiType: "chat" });
+  });
+
+  // A node may hold one connection PER KEY, so one node can spread load over
+  // several accounts of the same upstream (ohhmyagent's two keys, euro's 20…).
+  it("accepts a second connection with a DIFFERENT key on the same node", async () => {
+    const ctx = await setupTestContext({
+      id: "openai-compatible-multikey-test",
+      type: "openai-compatible",
+      name: "Multi Key Node",
+      prefix: "mk",
+      apiType: "chat",
+      baseUrl: "https://multi-key.test/v1",
+    });
+    cleanup = ctx.cleanup;
+
+    const first = await ctx.POST(makeRequest(ctx.node.id));
+    const second = await ctx.POST(makeRequest(ctx.node.id, { apiKey: "test-key-2", name: "Second Key" }));
+    const stored = await ctx.getProviderConnections({ provider: ctx.node.id });
+
+    expect(first.status).toBe(201);
+    expect(second.status).toBe(201);
+    expect(stored).toHaveLength(2);
+    // Both inherit the node's transport settings, differing only by credential.
+    for (const conn of stored) expectCompatibleConnection(conn, ctx.node, { apiType: "chat" });
+    expect(new Set(stored.map((c) => c.apiKey))).toEqual(new Set(["test-key", "test-key-2"]));
+  });
+
+  it("accepts a second key on an ANTHROPIC-compatible node too", async () => {
+    const ctx = await setupTestContext({
+      id: "anthropic-compatible-multikey-test",
+      type: "anthropic-compatible",
+      name: "Anthropic Multi Key Node",
+      prefix: "amk",
+      baseUrl: "https://anthropic-multi-key.test/v1",
+    });
+    cleanup = ctx.cleanup;
+
+    const first = await ctx.POST(makeRequest(ctx.node.id));
+    const second = await ctx.POST(makeRequest(ctx.node.id, { apiKey: "test-key-2", name: "Second Key" }));
+    const stored = await ctx.getProviderConnections({ provider: ctx.node.id });
+
+    expect(first.status).toBe(201);
+    expect(second.status).toBe(201);
+    expect(stored).toHaveLength(2);
   });
 });
