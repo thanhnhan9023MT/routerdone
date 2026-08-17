@@ -88,13 +88,24 @@ const MAX_TOKENS_FLOOR_HOSTS = [
   { host: /(^|\.)ohhmyagent\.com$/i, match: /claude|sonnet|opus|haiku|fable/i },
 ];
 
+// Normalize before matching, or the rule silently misses and we are back to 502:
+//  - "ohhmyagent.com:8080/v1" (no scheme) → URL() throws → assume https
+//  - "https://ohhmyagent.com./v1" (fully-qualified trailing dot) → hostname keeps the
+//    dot and no host regex ever matches
+// A relative path is left unresolved on purpose: guessing an origin for it would apply
+// somebody else's rule to an unknown upstream.
 function hostOf(baseUrl) {
   if (!baseUrl || typeof baseUrl !== "string") return "";
+  const raw = baseUrl.trim();
+  if (!raw || raw.startsWith("/")) return "";
+  const withScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(raw) ? raw : `https://${raw}`;
+  let host = "";
   try {
-    return new URL(baseUrl).hostname;
+    host = new URL(withScheme).hostname;
   } catch {
     return "";
   }
+  return host.replace(/\.$/, "").toLowerCase();
 }
 
 function raiseMaxTokensFloor(provider, model, body, baseUrl) {
